@@ -1,3 +1,0 @@
-CREATE ACCESS METHOD name
-    TYPE type
-    HANDLER handler

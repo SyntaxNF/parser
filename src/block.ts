@@ -1,38 +1,44 @@
+import { SNFParseError } from './error';
 import { CharType, Node, NodeType } from './type';
 
 export class SNFParser {
   private keywords: string[] = ['[', '{', '|', '}', ']', `'`, `"`];
   private pos = 0;
+  private lastPos = 0;
   private input = '';
   private closeStack: string[] = [];
 
-  parse(input: string) {
+  parse(input: string): Node {
     this.pos = 0;
+    this.lastPos = 0;
     this.input = input;
     this.closeStack = [];
     return this.parseExpression();
   }
 
-  private next(): CharType {
+  private next(): CharType | undefined {
+    if (this.pos >= this.input.length) return undefined;
+
     const now = this.pos;
+    this.lastPos = now;
     const char = this.input[this.pos];
     this.pos++;
 
     if (char === '\\') {
-      const char = this.input[this.pos];
+      if (this.pos >= this.input.length) {
+        throw new SNFParseError('Trailing escape character', this.input, now, 'an escaped character');
+      }
+
+      const decodedChar = this.input[this.pos];
       this.pos++;
-      return { char, decode: true, pos: now };
+      return { char: decodedChar, decode: true, pos: now, end: this.pos };
     }
 
-    return { char, decode: false, pos: now };
+    return { char, decode: false, pos: now, end: this.pos };
   }
 
   private back() {
-    if (this.input[this.pos - 2] === '\\') {
-      this.pos -= 2;
-    } else {
-      this.pos -= 1;
-    }
+    this.pos = this.lastPos;
   }
 
   private parseExpression(): Node {
@@ -41,86 +47,92 @@ export class SNFParser {
 
   private parseNode(type: NodeType = NodeType.COLLECTION): Node {
     const nodes: Node[] = [];
-    let start = -1;
-    let end = -1;
+    const start = this.pos;
+    let end = this.input.length;
 
     while (true) {
       const info = this.next();
 
-      const char = info.char;
-      if (!char) {
-        if (this.closeStack.length > 0) {
-          throw new Error('unclosed block');
+      if (!info) {
+        const expected = this.closeStack.at(-1);
+        if (expected) {
+          throw new SNFParseError(`Unclosed block, expected "${expected}"`, this.input, this.input.length, expected);
         }
         break;
       }
 
-      if (start === -1) {
-        start = info.pos;
-      }
-      if (char === this.closeStack[this.closeStack.length - 1]) {
+      const char = info.char;
+      const expected = this.closeStack.at(-1);
+      if (!info.decode && char === expected) {
         end = info.pos;
         this.closeStack.pop();
         break;
       }
 
-      if (char === '[') {
+      if (!info.decode && (char === ']' || char === '}')) {
+        throw new SNFParseError(`Unexpected closing character "${char}"`, this.input, info.pos, expected);
+      }
+
+      if (!info.decode && char === '[') {
         this.closeStack.push(']');
-        nodes.push(this.parseOptional());
-      } else if (char === '{') {
+        nodes.push(this.parseOptional(info.pos));
+      } else if (!info.decode && char === '{') {
         this.closeStack.push('}');
-        nodes.push(this.parseEnum());
+        nodes.push(this.parseEnum(info.pos));
       } else if (this.isRepeatStartChar(info)) {
         this.back();
-        nodes.push(this.parseString(NodeType.REPEAT, this.isRepeatChar, this.isBlankChar));
+        nodes.push(this.parseRepeat());
       } else if (this.isSplitStartChar(info)) {
-        this.back();
-        nodes.push(this.parseString(NodeType.SPLIT, this.isSplitChar, this.isBlankChar));
+        nodes.push({
+          type: NodeType.SPLIT,
+          content: '|',
+          raw: '|',
+          start: info.pos,
+          end: info.end,
+        });
       } else if (this.isVariableStartChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.VARIABLE, this.isVariableChar, this.isBlankChar));
       } else if (this.isDefinitionStartChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.DEFINITION, this.isDefinitionChar, this.isBlankChar));
+      } else if (this.isNumberStartChar(info)) {
+        this.back();
+        nodes.push(this.parseString(NodeType.NUMBER, this.isNumberChar, this.isBlankChar));
       } else if (this.isBlankChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.BLANK, this.isBlankChar, this.isNotBlankChar));
       } else if (this.isWrapChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.WRAP, this.isWrapChar, this.isNotWrapChar));
-      } else if (info.char === `'`) {
+      } else if (!info.decode && char === `'`) {
         nodes.push({
           type: NodeType.QUOTE,
           content: `'`,
+          raw: this.input.slice(info.pos, info.end),
           start: info.pos,
-          end: info.pos + 1,
+          end: info.end,
         });
-      } else if (info.char === `"`) {
+      } else if (!info.decode && char === `"`) {
         nodes.push({
           type: NodeType.DOUBLEQUOTE,
           content: `"`,
+          raw: this.input.slice(info.pos, info.end),
           start: info.pos,
-          end: info.pos + 1,
+          end: info.end,
         });
       } else if (this.isOtherStartChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.OTHER, this.isOtherChar, this.isBlankChar));
       } else if (!/\s/.test(char)) {
-        throw new Error(`parse error position: ${info.pos} char: ${char}`);
+        throw new SNFParseError(`Cannot parse character "${char}"`, this.input, info.pos);
       }
-    }
-
-    if (start === -1) {
-      start = 0;
-    }
-
-    if (end === -1) {
-      end = this.input.length;
     }
 
     return {
       type,
       content: this.input.slice(start, end),
+      raw: this.input.slice(start, end),
       start,
       end,
       children: nodes,
@@ -128,35 +140,27 @@ export class SNFParser {
   }
 
   private isWrapChar = (char: CharType): boolean => {
-    return /[\r\n]/.test(char.char);
+    return !char.decode && /[\r\n]/.test(char.char);
   };
 
   private isNotWrapChar = (char: CharType): boolean => {
-    return !/[\r\n]/.test(char.char);
+    return !this.isWrapChar(char);
   };
 
   private isBlankChar = (char: CharType): boolean => {
-    return /[ \t]/.test(char.char);
+    return !char.decode && /[ \t]/.test(char.char);
   };
 
   private isNotBlankChar = (char: CharType): boolean => {
-    return !/[ \t]/.test(char.char);
+    return !this.isBlankChar(char);
   };
 
   private isRepeatStartChar = (char: CharType): boolean => {
-    return char.char === '.' && this.input[this.pos] === '.' && this.input[this.pos + 1] === '.';
-  };
-
-  private isRepeatChar = (char: CharType): boolean => {
-    return char.char === '.';
+    return !char.decode && char.char === '.' && this.input.slice(char.pos, char.pos + 3) === '...';
   };
 
   private isSplitStartChar = (char: CharType): boolean => {
-    return char.char === '|';
-  };
-
-  private isSplitChar = (char: CharType): boolean => {
-    return char.char === '|';
+    return !char.decode && char.char === '|';
   };
 
   private isVariableStartChar = (char: CharType): boolean => {
@@ -175,96 +179,127 @@ export class SNFParser {
     return /[A-Z0-9_]/.test(char.char) || char.decode;
   };
 
-  private isOtherStartChar = (char: CharType): boolean => {
-    return /[^a-zA-Z0-9_\s]/.test(char.char) && !this.keywords.includes(char.char);
+  private isNumberStartChar = (char: CharType): boolean => {
+    return /[0-9]/.test(char.char);
   };
 
-  private isOtherChar = (char: CharType): boolean => {
+  private isNumberChar = (char: CharType): boolean => {
+    return /[0-9]/.test(char.char) || char.decode;
+  };
+
+  private isOtherStartChar = (char: CharType): boolean => {
     return /[^a-zA-Z0-9_\s]/.test(char.char) && (!this.keywords.includes(char.char) || char.decode);
   };
 
-  private parseString(nodeType: NodeType, checkInner: (char: CharType) => boolean, checkEnd?: (char: CharType) => boolean): Node {
-    let value = '';
-    let start = -1;
-    let end = -1;
+  private isOtherChar = (char: CharType): boolean => {
+    if (this.isRepeatStartChar(char)) return false;
+    return /[^a-zA-Z0-9_\s]/.test(char.char) && (!this.keywords.includes(char.char) || char.decode);
+  };
 
-    while (true) {
-      const info = this.next();
-      const char = info.char;
-      if (start === -1) {
-        start = info.pos;
-      }
+  private parseRepeat(): Node {
+    const start = this.pos;
+    const end = start + 3;
 
-      if (!info.char) {
-        end = info.pos;
-        break;
-      }
-
-      if (checkEnd && checkEnd(info)) {
-        end = info.pos;
-        this.back();
-        break;
-      } else if (!checkInner(info)) {
-        end = info.pos;
-        this.back();
-        break;
-      } else {
-        value += char;
-      }
+    if (this.input.slice(start, end) !== '...') {
+      throw new SNFParseError('Invalid repeat marker', this.input, start, '...');
+    }
+    if (this.input[end] === '.') {
+      throw new SNFParseError('Repeat marker must contain exactly three dots', this.input, start, '...');
     }
 
+    this.pos = end;
     return {
-      type: nodeType,
-      content: value,
+      type: NodeType.REPEAT,
+      content: '...',
+      raw: '...',
       start,
       end,
     };
   }
 
-  private parseOptional(): Node {
-    const node = this.parseName(this.parseNode(NodeType.OPTIONAL));
-    const children = node.children ?? [];
-    const content = node.content;
+  private parseString(
+    nodeType: NodeType,
+    checkInner: (char: CharType) => boolean,
+    checkEnd?: (char: CharType) => boolean,
+  ): Node {
+    let value = '';
+    const start = this.pos;
+    let end = this.input.length;
 
-    const contentChildren = children.filter((each) => each.type !== NodeType.BLANK);
-    if (contentChildren?.length === 1 && contentChildren[0].type === NodeType.ENUM) {
-      return node;
-    }
+    while (true) {
+      const info = this.next();
+      if (!info) break;
 
-    if (contentChildren.some((node) => node.type === NodeType.REPEAT)) {
-      return { ...node, type: NodeType.LOOP };
+      if (checkEnd?.(info) || !checkInner(info)) {
+        end = info.pos;
+        this.back();
+        break;
+      }
+
+      value += info.char;
     }
 
     return {
-      type: NodeType.OPTIONAL,
-      content: content,
-      start: node.start,
-      end: node.end,
-      children: [
-        this.groupedEnumChildren({
-          type: NodeType.ENUM,
-          content: content,
-          start: node.start,
-          end: node.end,
-          children: children,
-          name: node.name,
-        }),
-      ],
+      type: nodeType,
+      content: value,
+      raw: this.input.slice(start, end),
+      start,
+      end,
     };
   }
 
-  private parseEnum(): Node {
-    const node = this.parseName(this.parseNode(NodeType.ENUM));
-    return this.groupedEnumChildren(node);
+  private parseOptional(start: number): Node {
+    const innerNode = this.parseName(this.parseNode(NodeType.OPTIONAL));
+    const node: Node = {
+      ...innerNode,
+      start,
+      end: innerNode.end + 1,
+      raw: this.input.slice(start, innerNode.end + 1),
+    };
+    const children = node.children ?? [];
+    const contentChildren = children.filter((each) => each.type !== NodeType.BLANK);
+
+    if (contentChildren.length === 1 && contentChildren[0].type === NodeType.ENUM) {
+      return node;
+    }
+
+    if (contentChildren.some((child) => child.type === NodeType.REPEAT)) {
+      return { ...node, type: NodeType.LOOP };
+    }
+
+    const enumNode: Node = {
+      type: NodeType.ENUM,
+      content: node.content,
+      raw: innerNode.raw,
+      start: innerNode.start,
+      end: innerNode.end,
+      children,
+      name: node.name,
+    };
+
+    return {
+      ...node,
+      children: [this.groupedEnumChildren(enumNode)],
+    };
+  }
+
+  private parseEnum(start: number): Node {
+    const innerNode = this.parseName(this.parseNode(NodeType.ENUM));
+    return this.groupedEnumChildren({
+      ...innerNode,
+      start,
+      end: innerNode.end + 1,
+      raw: this.input.slice(start, innerNode.end + 1),
+    });
   }
 
   private parseName(node: Node): Node {
     const children = node.children;
-    if (!children || children.length === 0) return node;
+    if (!children?.length) return node;
 
     if ([NodeType.OPTIONAL, NodeType.ENUM].includes(node.type)) {
-      const contentChildren = children.filter((each) => ![NodeType.BLANK].includes(each.type));
-      const len = contentChildren?.length ?? 0;
+      const contentChildren = children.filter((each) => each.type !== NodeType.BLANK);
+      const len = contentChildren.length;
       if (len > 2 && contentChildren[len - 2].content === 'as' && contentChildren[len - 1].type === NodeType.VARIABLE) {
         const name = contentChildren[len - 1].content;
         const index = children.findIndex((each) => each === contentChildren[len - 2]);
@@ -274,47 +309,39 @@ export class SNFParser {
           name,
         };
       }
-
-      return node;
     }
 
     return node;
   }
 
   private groupedEnumChildren(node: Node): Node {
-    if (!node.children) return node;
+    const children = node.children ?? [];
+    const grouped: Node[] = [];
+    let groupStart = children[0]?.start ?? node.start;
+    let currentChildren: Node[] = [];
 
-    let grouped: Node[] = [];
-    let current: Node = {
-      type: NodeType.GROUP,
-      content: '',
-      start: -1,
-      end: -1,
-      children: [],
+    const appendGroup = (end: number) => {
+      grouped.push({
+        type: NodeType.GROUP,
+        content: this.input.slice(groupStart, end),
+        raw: this.input.slice(groupStart, end),
+        start: groupStart,
+        end,
+        children: currentChildren,
+      });
     };
 
-    for (const each of node.children) {
-      if (each.type === NodeType.SPLIT) {
-        grouped.push(current);
-        current = {
-          type: NodeType.GROUP,
-          content: '',
-          start: -1,
-          end: -1,
-          children: [],
-        };
+    for (const child of children) {
+      if (child.type === NodeType.SPLIT) {
+        appendGroup(child.start);
+        groupStart = child.end;
+        currentChildren = [];
       } else {
-        if (current.start === -1) {
-          current.start = each.start;
-        }
-        current.end = each.end;
-        current.children!.push(each);
+        currentChildren.push(child);
       }
     }
 
-    if (current.children?.length) {
-      grouped.push(current);
-    }
+    appendGroup(currentChildren.at(-1)?.end ?? groupStart);
 
     return {
       ...node,

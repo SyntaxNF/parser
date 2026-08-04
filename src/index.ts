@@ -1,11 +1,33 @@
 export { SNFParser } from './block';
 
-export { SNFFileParser } from './file';
+export { SNFDocumentParser, SNFFileParser } from './file';
 
-export type { CharType, Node, Block } from './type';
+export { SNFParseError } from './error';
 
-export { NodeType, ExchangeType } from './type';
+export type { CharType, Node, Block, DocumentLine, SNFDocument, QuoteCharacter } from './type';
 
-export { cleanBlank, copyNode } from './util';
+export { NodeType, ExchangeType, DocumentLineType } from './type';
 
-export { walk } from './walk';
+export {
+  addEnumName,
+  addLoopName,
+  cleanBlank,
+  cleanSingleBlank,
+  collectName,
+  copyNode,
+  createAddUid,
+  exchangeLoopNode,
+  exchangeQuoteNode,
+} from './walkers';
+
+export type {
+  WalkOption,
+  WalkContext,
+  WalkChildrenContext,
+  WalkChildKey,
+  NodeWalk,
+  BlockReducer,
+  BlockExchange,
+} from './walk';
+
+export { walk, walkBlocks, walkDocument, exchangeBlocks, reduceBlocks } from './walk';

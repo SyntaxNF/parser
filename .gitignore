@@ -6,4 +6,3 @@ cache
 *.local
 
 .vscode/*
-test/**/*.json
