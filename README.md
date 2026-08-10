@@ -1,6 +1,6 @@
 # snf-parser
 
-`snf-parser` 用于解析 SNF（Simple Normal Form）文档的物理结构和内容块语法。
+`snf-parser` 用于解析 SNF（Syntax Normal Form）文档的物理结构和内容块语法。
 
 解析器忠实保留当前文档的源码、物理行、Block 顺序和单块 AST，但不会解释注释的业务语义，不会解析跨 Block 引用，也不会把多个 Block 拼接成全局语法定义。调用方可以通过 Walker 在原始解析结果之上实现自己的指令、名称绑定和逻辑模型。
 
