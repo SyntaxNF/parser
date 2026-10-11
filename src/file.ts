@@ -1,4 +1,4 @@
-import { SNFParser } from './block';
+import { compileDocument } from './internal/compiler';
 import { Block, DocumentLine, DocumentLineType, SNFDocument } from './type';
 
 const readLines = (content: string): DocumentLine[] => {
@@ -42,8 +42,6 @@ const readLines = (content: string): DocumentLine[] => {
 };
 
 export class SNFDocumentParser {
-  private codeParser = new SNFParser();
-
   parse(content: string): SNFDocument {
     const lines = readLines(content);
     const blocks: Block[] = [];
@@ -53,18 +51,17 @@ export class SNFDocumentParser {
       if (!blockLines.length) return;
 
       const comment = blockLines
-        .filter((line) => line.type === DocumentLineType.COMMENT)
-        .map((line) => line.content)
+        .filter(line => line.type === DocumentLineType.COMMENT)
+        .map(line => line.content)
         .join('\n');
       const blockContent = blockLines
-        .filter((line) => line.type === DocumentLineType.CONTENT)
-        .map((line) => line.content)
+        .filter(line => line.type === DocumentLineType.CONTENT)
+        .map(line => line.content)
         .join('\n');
 
       blocks.push({
         comment,
         content: blockContent,
-        ast: this.codeParser.parse(blockContent),
         lines: blockLines,
         start: blockLines[0].start,
         end: blockLines.at(-1)!.end,
@@ -83,11 +80,6 @@ export class SNFDocumentParser {
     }
     appendBlock();
 
-    return {
-      type: 'document',
-      content,
-      lines,
-      blocks,
-    };
+    return compileDocument(content, lines, blocks);
   }
 }

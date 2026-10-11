@@ -15,19 +15,9 @@ export enum NodeType {
   QUOTE = 'q',
   DOUBLEQUOTE = 'dq',
   OTHER = 'o',
-}
-
-export enum ExchangeType {
-  BEFORE = 'b',
-  AFTER = 'a',
-  BOTH = 'ba',
-}
-
-export interface CharType {
-  char: string;
-  decode: boolean;
-  pos: number;
-  end: number;
+  QUOTED = 'qt',
+  REFERENCE = 'rf',
+  STATEMENT = 'st',
 }
 
 export type QuoteCharacter = `'` | `"`;
@@ -41,15 +31,23 @@ export interface Node {
   start: number;
   end: number;
   children?: Node[];
-  /** Optional caller/walker naming metadata. */
+  /** Dynamic-node label generated with the final UID. */
   name?: string;
-  /** Optional metadata added by built-in opt-in walkers. */
-  ast?: Node | Node[];
+  /** Source block index; offsets refer to that block's content. */
+  sourceBlock?: number;
+  /** Synthetic containers have no single source span. */
+  synthetic?: boolean;
+  /** A complete LOOP repeats children with this decoded delimiter (empty means whitespace). */
+  separator?: string;
+  /** Resolved recursive-reference target: the UID of a definition root. */
+  target?: string;
+  /** Source definition used at an expanded use site; excluded from identity. */
+  binding?: { name: string; kind: DefinitionKind };
+  /** STATEMENT categories are labels only; no external templates are loaded. */
+  categories?: string[];
   quote?: QuoteCharacter;
-  /** Stable v1 identity assigned after structural walkers. */
+  /** Stable identity assigned once after template compilation. */
   uid?: string;
-
-  [key: string]: unknown;
 }
 
 export enum DocumentLineType {
@@ -72,7 +70,6 @@ export interface DocumentLine {
 export interface Block {
   comment: string;
   content: string;
-  ast: Node;
   lines: DocumentLine[];
   /** Zero-based, half-open offsets into the original document source. */
   start: number;
@@ -80,8 +77,6 @@ export interface Block {
   /** One-based physical line numbers. */
   startLine: number;
   endLine: number;
-
-  [key: string]: unknown;
 }
 
 export interface SNFDocument {
@@ -89,4 +84,22 @@ export interface SNFDocument {
   content: string;
   lines: DocumentLine[];
   blocks: Block[];
+  entries: TemplateEntry[];
+  definitions: TemplateDefinition[];
+}
+
+export type DefinitionKind = 'WHERE' | 'ONEOFIS' | 'PARTOFIS' | 'STATEMENT';
+export interface TemplateEntry {
+  name?: string;
+  blocks: number[];
+  dependencies: string[];
+  ast: Node;
+}
+export interface TemplateDefinition {
+  kind: DefinitionKind;
+  names: string[];
+  blocks: number[];
+  dependencies: string[];
+  recursive: boolean;
+  ast: Node;
 }
