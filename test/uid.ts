@@ -115,7 +115,7 @@ test('sibling GROUP scopes isolate keywords and ignore ancestor ordinals', () =>
   const c = parse('MODE { LIMIT first | OFFSET second | FETCH third }');
   assert.equal(named(a, 'b').uid, named(c, 'second').uid);
 });
-test('OPTIONAL scans only direct fixed children and ignores nested content', () => {
+test('OPTIONAL signatures include direct children but do not expand nested enum contents', () => {
   assert.deepEqual(ids(parse('[ { A | B } ]'), T.OPTIONAL), ids(parse('[ { C | D } ]'), T.OPTIONAL));
   assert.deepEqual(
     ids(parse('[ value = other ]'), T.OPTIONAL),

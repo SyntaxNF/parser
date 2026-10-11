@@ -24,9 +24,9 @@
     }
   },
   "scripts": {
-    "test": "tsx test/index.ts && tsx test/uid.ts && tsx test/name.ts && tsx test/metadata.ts && tsx test/normalize.ts && tsx test/compiler.ts",
+    "test": "tsx test/index.ts && tsx test/uid.ts && tsx test/boundary-identity.ts && tsx test/name.ts && tsx test/metadata.ts && tsx test/normalize.ts && tsx test/compiler.ts",
     "test:name": "tsx test/name.ts",
-    "test:uid": "tsx test/uid.ts",
+    "test:uid": "tsx test/uid.ts && tsx test/boundary-identity.ts",
     "test:complex": "tsx test/complex.ts",
     "build": "node scripts/clean-build.mjs && vite build"
   },

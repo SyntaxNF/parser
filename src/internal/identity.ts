@@ -6,6 +6,7 @@ import {
   inheritDefinitionScope,
 } from './definition-context';
 import { hash128 } from './hash';
+import { collectLocalFeatures, LocalFeature } from './boundary-identity';
 
 export const UID_VERSION = 'UID_V1';
 
@@ -63,17 +64,21 @@ const hex = (value: number, label: string) => {
 };
 
 /** Derive identity and display metadata from the same incoming definition scope. */
-function describeNode(node: Node, scope: DefinitionScope, quote?: QuoteCharacter): NodeDescription {
+function describeNode(
+  node: Node, scope: DefinitionScope, feature: LocalFeature | undefined, quote?: QuoteCharacter,
+): NodeDescription {
   let local: unknown = null;
   let name: string | undefined;
   if (fixed.has(node.type)) {
     local = [UID_TYPE_CODES[node.type], node.content];
   } else if (contextual.has(node.type) && scope.keywords.length) {
     local = ['DEFINITION_CONTEXT', [...scope.keywords]];
-  } else if (node.type === NodeType.OPTIONAL) {
-    const descriptor = node.children?.find(child => fixed.has(child.type));
-    if (descriptor) local = [UID_TYPE_CODES[descriptor.type], descriptor.content];
-    name = descriptor?.content.toUpperCase() || 'OPTIONAL';
+  } else if (feature) {
+    local = feature.code;
+    if (node.type === NodeType.OPTIONAL) {
+      const descriptor = node.children?.find(child => fixed.has(child.type));
+      name = descriptor?.content.toUpperCase() || 'OPTIONAL';
+    }
   } else if (
     [NodeType.SPLIT, NodeType.REPEAT, NodeType.QUOTE, NodeType.DOUBLEQUOTE].includes(node.type) ||
     (trivia.has(node.type) && quote)
@@ -95,6 +100,8 @@ export function createUidAllocator(hash: (input: string) => string): (root: Node
   const paths = new Map<string, string>();
   const hashes = new Map<string, string>();
   return root => {
+    // Phase 1 has no UID or definition-scope dependencies. Phase 2 below is preorder.
+    const features = collectLocalFeatures([root]);
     const previousCounts = new Map<string, number | undefined>();
     const addedPaths: string[] = [];
     let result: Node;
@@ -118,7 +125,7 @@ export function createUidAllocator(hash: (input: string) => string): (root: Node
           throw new Error(`Unknown SNF uid node type: ${node.type}`);
         const code = UID_TYPE_CODES[node.type];
         const quote = node.quote ?? scope.quote;
-        const { local, name } = describeNode(node, scope, quote);
+        const { local, name } = describeNode(node, scope, features.get(node), quote);
         // Parent digest commits to all ancestor segments, never their ordinals.
         // JSON arrays preserve token boundaries; UTF-8 and hash case are fixed.
         const path = JSON.stringify([

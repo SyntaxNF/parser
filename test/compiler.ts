@@ -15,6 +15,7 @@ test('public API consists only of parsers, diagnostics, types and UID format', (
       'SNFParser',
       'UID_TYPE_CODES',
       'UID_VERSION',
+      'findIdentityCollisions',
     ].sort(),
   );
 });

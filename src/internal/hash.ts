@@ -1,4 +1,4 @@
-// Synchronous SHA-256, UTF-8 input, truncated to 128 bits. No Node-only API so
+// Synchronous SHA-256, UTF-8 input. No Node-only API so
 // the same UID algorithm works in browser and Node builds.
 const K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
@@ -13,7 +13,7 @@ const K = [
 const rotate = (value: number, bits: number) => (value >>> bits) | (value << (32 - bits));
 const encoder = new TextEncoder();
 
-export function hash128(text: string): string {
+export function hash256(text: string): string {
   const input = encoder.encode(text);
   const bytes = new Uint8Array(Math.ceil((input.length + 9) / 64) * 64);
   bytes.set(input);
@@ -53,8 +53,16 @@ export function hash128(text: string): string {
     });
   }
   return h
-    .slice(0, 4)
     .map(value => value.toString(16).padStart(8, '0'))
     .join('')
     .toUpperCase();
+}
+
+export const hash128 = (text: string): string => hash256(text).slice(0, 32);
+
+/** Full SHA-256 interpreted as an unsigned integer modulo 36⁴, without precision loss. */
+export function shortCode(text: string): string {
+  let value = 0;
+  for (const digit of hash256(text)) value = (value * 16 + parseInt(digit, 16)) % 1679616;
+  return value.toString(36).toUpperCase().padStart(4, '0');
 }

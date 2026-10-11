@@ -92,6 +92,10 @@ UID 格式为 `{类型码4位}-{深度4位}-{功能路径哈希32位}-{同前缀
 
 类型码由 `UID_TYPE_CODES` 静态登记；前两位为类型缩写，后两位为缩写冲突的登记序号。COLLECTION 保留引用位置的 DEFINITION 功能标识，避免展开后丢失调用上下文。UID 在最终结构上生成，不包含变量名、helper/CASE 名称、源码位置、注释或推导出的 name。
 
+QUOTED / OPTIONAL / GROUP 统一按直接子节点生成有序特征数组，再对其 JSON 编码做 SHA-256、对 `36⁴` 取模，得到 **4 位大写 Base36** 局部特征。所有 DEFINITION、NUMBER 保留完整内容，变量等其他类型只取类型名称首字母；类别标签防止固定文本与类型缩写混淆。QUOTED 子节点提供引号类型和已生成的四位特征，父节点不读取其 children。引号内固定符号及空白保留，普通空白忽略；其他容器只提供类型，不展开内部内容。保留直接子节点顺序，不针对可交换参数列表排序。
+
+生成分两阶段：先用后序深度优先遍历计算局部特征，再用前序遍历结合父级路径分配 UID/name。两次遍历都使用显式栈，局部特征不依赖 UID、变量名或历史解析结果，也不作为中间字段写入 AST。例：`'Y'` 的特征 `[["D","Y"]]` 得到 `C4GQ`，父级遇到它只记录 `["Q","'","C4GQ"]`。
+
 | 动态类型 | name |
 | --- | --- |
 | VARIABLE / REFERENCE / STATEMENT | 自身 content，保留大小写 |
@@ -100,7 +104,27 @@ UID 格式为 `{类型码4位}-{深度4位}-{功能路径哈希32位}-{同前缀
 
 同一上下文允许重名，UID 负责唯一性。DEFINITION 上下文按结构进出作用域，子结构继承、内部修改不泄漏，GROUP 相互隔离；每个入口和定义根重新开始。引号内关键字不改变外层上下文。
 
+GROUP 不自动生成 name；OPTIONAL 的显示名称仍按上表获取，与用于 UID 的完整特征数组分开。
+
 变量改名、普通排版变化、带不同功能标识的片段换序可以保持对应 UID。同前缀位置依靠序号区分，因此插入同前缀节点可能影响后续序号；新增实际包裹、修改关键字、引号或循环分隔符可以改变 UID。跨文档使用时还需携带文档标识。
+
+通过 `findIdentityCollisions` 检查最终 AST 中 QUOTED / OPTIONAL / GROUP 的完整前缀重复：
+
+```ts
+import { findIdentityCollisions } from 'snf-parser';
+
+const collisions = findIdentityCollisions(
+  [...document.entries, ...document.definitions].map(item => item.ast),
+);
+// 片段也可以直接调用 findIdentityCollisions(fragment)。
+for (const { kind, prefix, occurrences } of collisions) {
+  console.log(kind, prefix, occurrences);
+}
+```
+
+`short-hash` 表示当前节点不同的直接子级签名压成相同四位短码；`same-signature` 表示直接子级特征本就相同，仍需序号区分。QUOTED 碰撞可能使父级报告 same-signature，具体碰撞由 QUOTED 自身的 short-hash 报告定位。报告包含 UID、源码块、偏移、raw 和压缩前的直接子级 `fullSignature`；其中子 QUOTED 仍记录短码，不展开孙节点。
+
+诊断只读，不改变解析结果。每次仅传入同一解析会话的根；同一根对象重复传入不会重复计数，缺失 UID 或不同节点对象具有完全相同 UID 则报输入错误。局部短码重复但上下文或节点类型不同，不会仅因此被报告。
 
 完整编码、类型登记和稳定性边界见 [稳定 ID 设计](docs/snf-ast-stable-id-design.md)。
 
@@ -118,6 +142,7 @@ UID 格式为 `{类型码4位}-{深度4位}-{功能路径哈希32位}-{同前缀
 | `src/internal/syntax.ts` / `normalize.ts` | 基础记号解析、完整引号序列和循环成员绑定 |
 | `src/internal/definitions.ts` | 递归检测、本地定义展开和引用目标绑定 |
 | `src/internal/identity.ts` / `definition-context.ts` / `hash.ts` | 功能标识与名称规则、作用域状态、UID 编码与哈希 |
+| `src/internal/boundary-identity.ts` / `src/identity-collisions.ts` | QUOTED / OPTIONAL / GROUP 后序局部特征、短码碰撞与重复特征诊断 |
 
 `Production` 表示已经具有语法树和依赖信息的内部定义，声明收集阶段单独使用 `Declaration`。对外仍只暴露完成编译的文档与节点。
 
@@ -129,4 +154,4 @@ pnpm build
 pnpm test:complex
 ```
 
-`build` 清理 dist 后生成 ESM 与类型声明。单测覆盖完整编译、递归绑定、STATEMENT、引号与循环、命名与 UID 稳定性、碰撞和溢出。`test:complex` 对同级四库全部 SNF 检查最终节点、来源范围、引用目标、UID 唯一性和重新解析确定性；遵守各库的验证授权要求。
+`build` 清理 dist 后生成 ESM 与类型声明。单测覆盖完整编译、递归绑定、STATEMENT、引号与循环、命名与 UID 稳定性、真实四位容器短码碰撞和溢出。`test:uid` 包含三类节点的换序、插入、改名、直接子级边界、深层遍历与碰撞传播回归。`test:complex` 对同级四库全部 SNF 检查最终节点、来源范围、引用目标、UID 唯一性和重新解析确定性，同时汇总重复特征；四位短码导致完整前缀碰撞时测试失败并给出来源。遵守各库的验证授权要求。

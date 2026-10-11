@@ -13,3 +13,5 @@ export type {
   TemplateDefinition,
 } from './type';
 export { UID_TYPE_CODES, UID_VERSION } from './internal/identity';
+export { findIdentityCollisions } from './identity-collisions';
+export type { IdentityCollision } from './identity-collisions';
