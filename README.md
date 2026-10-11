@@ -50,7 +50,7 @@ console.log(document.blocks[1].comment);  // # CASE NORMAL
 
 注释始终是不透明文本。上例中的 `CASE` 和 `WHERE` 不属于 parser 内置语法，parser 不会根据它们修改 AST。
 
-为了兼容旧版本，`SNFFileParser.parse(source)` 仍异步返回 `Block[]`。新代码推荐使用同步的 `SNFDocumentParser.parse(source)`，这样可以同时保留完整文档源码。
+`SNFDocumentParser.parse(source)` 同步返回包含完整源码的文档对象，通过 `document.blocks` 获取内容块。
 
 ## SNF 基础记号
 
@@ -61,8 +61,9 @@ console.log(document.blocks[1].comment);  // # CASE NORMAL
 | `123` | `NUMBER` | 以数字开头的数字字面量。 |
 | `[ syntax ]` | `OPTIONAL` | 整个内容可选。 |
 | `{ a \| b }` | `ENUM` | 从候选 Group 中选择一个。 |
+| `[ { a \| b } ]` | `OPTIONAL`、`ENUM` | 可选的显式枚举。 |
 | `syntax [...]` | `LOOP`、`REPEAT` | 前面的语法可以重复；重复标记必须恰好是 `...`。 |
-| `\|` | `SPLIT` | 枚举候选分隔符。 |
+| `\|` | `SPLIT` | 仅在显式 `{}` 的当前层级分隔候选，解析后划分为 Group。 |
 | 空格、Tab | `BLANK` | 水平空白。 |
 | 换行 | `WRAP` | 内容块内部的换行。 |
 | `'`、`"` | `QUOTE`、`DOUBLEQUOTE` | 原样保留的引号字符。 |
@@ -74,11 +75,13 @@ console.log(document.blocks[1].comment);  // # CASE NORMAL
 new SNFParser().parse(String.raw`value\|part`);
 ```
 
-可选块和枚举块末尾支持 `as name` 元数据。名称写入节点的 `name` 字段，不再作为候选子节点输出：
+`[]` 只表示可选序列，不自动增加 ENUM 或 GROUP；只有显式 `{}` 才创建枚举，单候选 `{ value }` 也保留 ENUM 和 GROUP。未转义的 `|` 必须直接属于 `{}`，因此 `[ A | B ]`、`A | B` 和 `{ [ A | B ] }` 都会抛出 `SNFParseError`。可选枚举应写为：
 
 ```snf
-{ colname coltype as column_definition }
+[ { ASC | DESC } ]
 ```
+
+`Node.name` 由调用方附加，或通过名称 Walker 推导；parser 不从语法中提取命名元数据。
 
 ## 文档结构
 
@@ -131,7 +134,7 @@ interface Node {
 
 ## Walker
 
-Walker 不修改输入 AST，而是返回新树。`exchange` 默认在访问子节点前执行，`filter` 在转换完成后执行；根节点本身不会被删除。
+Walker 不修改输入 AST，而是返回新树。回调中的 `parent` 为真实父节点，根节点对应 `undefined`。`exchange` 默认在访问子节点前执行，`filter` 在转换完成后执行；根节点本身不会被删除。
 
 ```ts
 import {
@@ -205,7 +208,8 @@ const normalized = addUid(
 - `addLoopName`：根据循环前的节点推导复数名称。
 - `exchangeLoopNode`：把后缀重复结构转换成以被重复节点为 children 的逻辑循环，原循环标记子树保存在 `ast`。
 - `exchangeQuoteNode`：移除单双引号定界节点，为其中节点添加 `quote` 元数据。
-- `createAddUid`：创建有独立计数状态的 Walker，为节点添加四位字母 `uid`。
+- `createAddUid`：创建文档级计数会话，为节点分配稳定 `uid`；在结构转换后调用，每份文档使用新实例。
+- `addDocumentUid`：为已转换文档一次性分配稳定 ID，自动创建新会话。
 - `collectName`：收集命名枚举、循环作用域及其变量路径。
 - `copyNode`：深复制节点树。
 
@@ -233,6 +237,31 @@ const definitions = reduceBlocks(
 - `cleanBlank`：移除 `BLANK` 节点。
 - `copyNode`：复制完整节点树。
 
+## 稳定节点 ID
+
+原始解析不自动添加 UID。推荐先统一结构转换，再为文档分配：
+
+```ts
+import {
+  SNFDocumentParser, walkDocument, exchangeQuoteNode, exchangeLoopNode,
+  addDocumentUid,
+} from 'snf-parser';
+
+const raw = new SNFDocumentParser().parse(source);
+const logical = walkDocument(raw, exchangeQuoteNode, exchangeLoopNode);
+const identified = addDocumentUid(logical);
+```
+
+格式为 `{类型码4位}-{深度4位}-{路径哈希32位}-{同前缀序号4位}`，例如类型码 `VA00` 表示 VARIABLE。深度从 `0000` 开始，同前缀序号从 `0000` 开始，两者上限 `FFFF`；越界明确报错。静态类型登记见 `UID_TYPE_CODES`，规则版本为 `UID_VERSION = 'snf-uid-v1'`。
+
+VARIABLE、ENUM、LOOP 使用当前作用域最近一段连续 DEFINITION（如 `ORDER BY`）作为标识。子结构继承上下文，退出后恢复；枚举各候选独立，每个 Block 重置。OPTIONAL 只取直接子节点中第一个 DEFINITION、NUMBER、OTHER；ROOT/GROUP 不寻找标识。路径逐级包含祖先类型与标识，不含变量名、源码偏移、注释、推导名称或祖先序号。哈希固定为 UTF-8 SHA-256 前 128 位，碰撞检测后报错。
+
+因此 `SELECT a` 改成 `SELECT b`、普通排版调整、带不同关键字段的完整功能片段换序可保持对应 ID；同前缀重复位置仍用序号区分，新增同前缀节点可能使后续序号顺延。真实包裹、关键字段或 Walker 配置变化允许改变 ID。只保证单文档内唯一，跨文件引用仍需带文档标识。
+
+`children` 和 `ast` 均分配 ID，并以不同路径边隔离；引号类型和引号内有意义的空白参与身份。输入树不变，已有 UID 会被重新计算。`createAddUid()` 可接入 Walker 流程，但不能将同一实例跨文档复用。
+
+完整类型表、编码协议、栈规则和稳定性边界见 [稳定 ID 设计](docs/snf-ast-stable-id-design.md)。
+
 ## 错误
 
 非法闭合、未闭合 Block、尾随转义符和非法重复标记会抛出 `SNFParseError`。错误对象提供：
@@ -246,10 +275,13 @@ const definitions = reduceBlocks(
 ```bash
 pnpm install
 pnpm test
+pnpm test:uid
 pnpm test:complex
 pnpm build
 ```
 
-`pnpm test` 覆盖基础节点、紧凑重复写法、转义错误、Walker 不可变性和文档 Block 边界。
+`pnpm build` 先清理 `dist`，再生成 JavaScript 和类型声明，确保输出只包含当前接口。
 
-`pnpm test:complex` 会读取同级的 MySQL 和 PostgreSQL SNF 仓库，先验证一组复杂真实文档的结构覆盖，再扫描两个仓库中的全部 `.snf` 文件。可通过 `SNF_MYSQL_ROOT` 和 `SNF_POSTGRESQL_ROOT` 指定其他路径。
+`pnpm test` 覆盖显式可选与枚举结构、非法分隔符的位置、紧凑重复写法、转义错误、Walker 不可变性和文档 Block 边界，以及稳定 UID 的作用域、换序、改名、碰撞、溢出和不可变性回归；`pnpm test:uid` 可单独运行后者。
+
+`pnpm test:complex` 会读取同级的 `mysql`、`postgres`、`oracle`、`sqlserver` 仓库，先验证一组复杂真实文档的结构覆盖，再扫描四库中的全部 `.snf` 文件，检查显式 ENUM、GROUP 归属和源码范围，并验证转换后 UID 的唯一性、重新解析确定性和变量批量改名稳定性。可通过 `SNF_MYSQL_ROOT`、`SNF_POSTGRESQL_ROOT`、`SNF_ORACLE_ROOT`、`SNF_SQLSERVER_ROOT` 指定其他路径。此命令会校验数据库定义，应遵守各仓库的显式授权要求；不作为普通单元测试自动执行。

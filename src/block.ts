@@ -83,6 +83,14 @@ export class SNFParser {
         this.back();
         nodes.push(this.parseRepeat());
       } else if (this.isSplitStartChar(info)) {
+        if (type !== NodeType.ENUM) {
+          throw new SNFParseError(
+            'Alternative separator "|" is only allowed directly inside an enumeration',
+            this.input,
+            info.pos,
+            '{ ... | ... }',
+          );
+        }
         nodes.push({
           type: NodeType.SPLIT,
           content: '|',
@@ -249,69 +257,27 @@ export class SNFParser {
   }
 
   private parseOptional(start: number): Node {
-    const innerNode = this.parseName(this.parseNode(NodeType.OPTIONAL));
+    const innerNode = this.parseNode(NodeType.OPTIONAL);
     const node: Node = {
       ...innerNode,
       start,
       end: innerNode.end + 1,
       raw: this.input.slice(start, innerNode.end + 1),
     };
-    const children = node.children ?? [];
-    const contentChildren = children.filter((each) => each.type !== NodeType.BLANK);
-
-    if (contentChildren.length === 1 && contentChildren[0].type === NodeType.ENUM) {
-      return node;
-    }
-
-    if (contentChildren.some((child) => child.type === NodeType.REPEAT)) {
+    if (node.children?.some((child) => child.type === NodeType.REPEAT)) {
       return { ...node, type: NodeType.LOOP };
     }
-
-    const enumNode: Node = {
-      type: NodeType.ENUM,
-      content: node.content,
-      raw: innerNode.raw,
-      start: innerNode.start,
-      end: innerNode.end,
-      children,
-      name: node.name,
-    };
-
-    return {
-      ...node,
-      children: [this.groupedEnumChildren(enumNode)],
-    };
+    return node;
   }
 
   private parseEnum(start: number): Node {
-    const innerNode = this.parseName(this.parseNode(NodeType.ENUM));
+    const innerNode = this.parseNode(NodeType.ENUM);
     return this.groupedEnumChildren({
       ...innerNode,
       start,
       end: innerNode.end + 1,
       raw: this.input.slice(start, innerNode.end + 1),
     });
-  }
-
-  private parseName(node: Node): Node {
-    const children = node.children;
-    if (!children?.length) return node;
-
-    if ([NodeType.OPTIONAL, NodeType.ENUM].includes(node.type)) {
-      const contentChildren = children.filter((each) => each.type !== NodeType.BLANK);
-      const len = contentChildren.length;
-      if (len > 2 && contentChildren[len - 2].content === 'as' && contentChildren[len - 1].type === NodeType.VARIABLE) {
-        const name = contentChildren[len - 1].content;
-        const index = children.findIndex((each) => each === contentChildren[len - 2]);
-        return {
-          ...node,
-          children: children.slice(0, index),
-          name,
-        };
-      }
-    }
-
-    return node;
   }
 
   private groupedEnumChildren(node: Node): Node {

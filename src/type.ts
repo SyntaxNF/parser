@@ -41,10 +41,12 @@ export interface Node {
   start: number;
   end: number;
   children?: Node[];
+  /** Optional caller/walker naming metadata. */
   name?: string;
   /** Optional metadata added by built-in opt-in walkers. */
   ast?: Node | Node[];
   quote?: QuoteCharacter;
+  /** Stable v1 identity assigned after structural walkers. */
   uid?: string;
 
   [key: string]: unknown;

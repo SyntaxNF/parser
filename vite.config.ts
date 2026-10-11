@@ -18,5 +18,5 @@ export default defineConfig({
       },
     },
   },
-  plugins: [dts({ include: 'src', outDirs: 'dist/type' })],
+  plugins: [dts({ include: 'src', outDir: 'dist/type' })],
 });

@@ -8,12 +8,12 @@ import {
   copyNode,
   createAddUid,
   DocumentLineType,
+  ExchangeType,
   exchangeLoopNode,
   exchangeQuoteNode,
   Node,
   NodeType,
   SNFDocumentParser,
-  SNFFileParser,
   SNFParseError,
   SNFParser,
   walk,
@@ -42,6 +42,28 @@ const assertRawRanges = (root: Node, source: string): void => {
 
 const parser = new SNFParser();
 
+for (const exchangeType of Object.values(ExchangeType)) {
+  let rootVisits = 0;
+  const assertParent = (node: Node, parent: Node | undefined) => {
+    if (node.type === NodeType.ROOT) {
+      assert.equal(parent, undefined, 'root has no parent');
+      rootVisits++;
+    } else {
+      assert.equal(parent?.type, NodeType.ROOT);
+    }
+  };
+  walk(parser.parse('SELECT value'), {
+    includeRoot: true,
+    exchangeType,
+    exchange: (node, parent, context) => {
+      assert.equal(parent, context.parent);
+      assertParent(node, parent);
+    },
+    back: assertParent,
+  });
+  assert.equal(rootVisits, exchangeType === ExchangeType.BOTH ? 3 : 2);
+}
+
 const compactSource = 'CREATE [OR REPLACE] FUNCTION name ([arg[, ...]])';
 const compactAst = parser.parse(compactSource);
 assert.equal(compactAst.raw, compactSource);
@@ -57,6 +79,87 @@ assert.deepEqual(
   collect(numericEnumAst, NodeType.NUMBER).map((node) => node.content),
   ['0', '1', '123'],
 );
+
+// Square brackets preserve a sequence; only explicit braces introduce choices.
+const optionalSource = '[ LIMIT count ]';
+const optionalAst = parser.parse(optionalSource);
+assertRawRanges(optionalAst, optionalSource);
+const optional = cleanBlank(optionalAst).children![0];
+assert.equal(optional.type, NodeType.OPTIONAL);
+assert.deepEqual(optional.children?.map((node) => [node.type, node.content]), [
+  [NodeType.DEFINITION, 'LIMIT'],
+  [NodeType.VARIABLE, 'count'],
+]);
+assert.equal(collect(optionalAst, NodeType.ENUM).length, 0);
+assert.equal(collect(optionalAst, NodeType.GROUP).length, 0);
+
+const optionalEnumSource = '[ { ASC | DESC } ]';
+const optionalEnumAst = parser.parse(optionalEnumSource);
+assertRawRanges(optionalEnumAst, optionalEnumSource);
+const optionalEnum = cleanBlank(optionalEnumAst).children![0].children![0];
+assert.equal(optionalEnum.type, NodeType.ENUM);
+assert.deepEqual(optionalEnum.children?.map((group) => [group.type, group.children![0].content]), [
+  [NodeType.GROUP, 'ASC'],
+  [NodeType.GROUP, 'DESC'],
+]);
+assert.equal(optionalEnum.raw, '{ ASC | DESC }');
+
+for (const source of ['[ [ a ] ]', '{ [ A ] | [ { B | C } ] }', '{ A }', '{ | A || }']) {
+  const ast = parser.parse(source);
+  assertRawRanges(ast, source);
+  walk(ast, {
+    exchange(node, parent) {
+      if (node.type === NodeType.GROUP) assert.equal(parent?.type, NodeType.ENUM);
+    },
+  });
+}
+assert.equal(collect(parser.parse('[ [ a ] ]'), NodeType.ENUM).length, 0);
+assert.equal(collect(parser.parse('{ A }'), NodeType.GROUP).length, 1);
+const emptyChoices = cleanBlank(parser.parse('{ | A || }')).children![0].children!;
+assert.deepEqual(emptyChoices.map((group) => group.children!.map((node) => node.content)), [[], ['A'], [], []]);
+
+for (const source of ['A | B', '[ A | B ]', '{ [ A | B ] }', '[ { A | B } | C ]', 'item [, ... | other]']) {
+  assert.throws(
+    () => parser.parse(source),
+    (error: unknown) => error instanceof SNFParseError
+      && error.offset === source.lastIndexOf('|')
+      && error.expected === '{ ... | ... }',
+  );
+}
+assert.throws(
+  () => parser.parse('[ A\n  | B ]'),
+  (error: unknown) => error instanceof SNFParseError && error.line === 2 && error.column === 3,
+);
+
+for (const source of [String.raw`A \| B`, String.raw`[ a\|b ]`, String.raw`{ A\|B | C }`, String.raw`[ \[ \{ \| \} \] ]`]) {
+  const ast = parser.parse(source);
+  assertRawRanges(ast, source);
+  assert.equal(collect(ast, NodeType.SPLIT).length, 0);
+}
+assert.equal(collect(parser.parse(String.raw`[ a\|b ]`), NodeType.VARIABLE)[0].content, 'a|b');
+
+// Lowercase words remain ordinary variables; only opt-in walkers add names.
+for (const source of ['{ value as item }', '[ value as item ]', '[ { value as item } ]']) {
+  const ast = parser.parse(source);
+  assertRawRanges(ast, source);
+  assert.deepEqual(collect(ast, NodeType.VARIABLE).map((node) => node.content), ['value', 'as', 'item']);
+  walk(ast, { includeRoot: true, exchange: (node) => { assert.equal(node.name, undefined); } });
+}
+
+// Explicit choices and direct optional sequences can both be repeated.
+for (const [source, memberType] of [
+  ['item[...]', NodeType.VARIABLE],
+  ['item[, ...]', NodeType.VARIABLE],
+  ['{ a | b } [, ...]', NodeType.ENUM],
+  ['[ NEXT item ] [...]', NodeType.OPTIONAL],
+] as const) {
+  const ast = parser.parse(source);
+  assertRawRanges(ast, source);
+  const loops = collect(exchangeLoopNode(ast), NodeType.LOOP);
+  assert.equal(loops.length, 1);
+  assert.equal(loops[0].children![0].type, memberType);
+  assert.equal(Array.isArray(loops[0].ast), true);
+}
 
 assert.throws(
   () => parser.parse('name\\'),
@@ -116,9 +219,6 @@ assert.notEqual(cleanedDocument, document);
 assert.equal(collect(document.blocks[1].ast, NodeType.BLANK).length > 0, true);
 assert.equal(collect(cleanedDocument.blocks[1].ast, NodeType.BLANK).length, 0);
 
-const legacyBlocks = await new SNFFileParser().parse(documentSource);
-assert.deepEqual(legacyBlocks, document.blocks);
-
 const indentedAst = parser.parse('  CREATE TABLE name');
 const cleanedSingleBlankAst = cleanSingleBlank(indentedAst);
 assert.deepEqual(
@@ -165,9 +265,9 @@ const copiedLoopAst = copyNode(exchangedLoopAst);
 assert.notEqual(collect(copiedLoopAst, NodeType.LOOP)[0].ast, exchangedLoop.ast);
 
 const uidAst = createAddUid()(exchangedLoopAst);
-assert.equal(uidAst.uid, 'aaaa');
+assert.match(uidAst.uid!, /^RO00-0000-[0-9A-F]{32}-0000$/);
 const uidNodes = [uidAst, ...collect(uidAst, NodeType.VARIABLE), ...collect(uidAst, NodeType.LOOP)];
-assert.equal(uidNodes.every((node) => /^[a-z]{4}$/.test(node.uid ?? '')), true);
+assert.equal(uidNodes.every((node) => /^[A-Z]{2}[0-9A-F]{2}-[0-9A-F]{4}-[0-9A-F]{32}-[0-9A-F]{4}$/.test(node.uid ?? '')), true);
 assert.equal(new Set(uidNodes.map((node) => node.uid)).size, uidNodes.length);
 
 console.log('Base parser tests passed.');

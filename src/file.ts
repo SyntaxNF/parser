@@ -1,6 +1,5 @@
 import { SNFParser } from './block';
-import { Block, DocumentLine, DocumentLineType, Node, SNFDocument } from './type';
-import { walkBlocks, walkDocument } from './walk';
+import { Block, DocumentLine, DocumentLineType, SNFDocument } from './type';
 
 const readLines = (content: string): DocumentLine[] => {
   const lines: DocumentLine[] = [];
@@ -90,23 +89,5 @@ export class SNFDocumentParser {
       lines,
       blocks,
     };
-  }
-}
-
-/**
- * Backwards-compatible block-array API. New consumers should prefer
- * SNFDocumentParser so the original document source remains available.
- */
-export class SNFFileParser {
-  private documentParser = new SNFDocumentParser();
-
-  async parse(content: string, ...walks: ((node: Node) => Node)[]): Promise<Block[]> {
-    const blocks = this.documentParser.parse(content).blocks;
-    return walks.length ? walkBlocks(blocks, ...walks) : blocks;
-  }
-
-  parseDocument(content: string, ...walks: ((node: Node) => Node)[]): SNFDocument {
-    const document = this.documentParser.parse(content);
-    return walks.length ? walkDocument(document, ...walks) : document;
   }
 }

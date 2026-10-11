@@ -1,6 +1,6 @@
 export { SNFParser } from './block';
 
-export { SNFDocumentParser, SNFFileParser } from './file';
+export { SNFDocumentParser } from './file';
 
 export { SNFParseError } from './error';
 
@@ -16,6 +16,9 @@ export {
   collectName,
   copyNode,
   createAddUid,
+  addDocumentUid,
+  UID_TYPE_CODES,
+  UID_VERSION,
   exchangeLoopNode,
   exchangeQuoteNode,
 } from './walkers';

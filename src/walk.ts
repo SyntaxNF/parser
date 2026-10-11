@@ -3,7 +3,7 @@ import { Block, ExchangeType, Node, SNFDocument } from './type';
 export type WalkChildKey = 'children' | 'ast';
 
 export interface WalkContext {
-  /** The actual parent, unlike the compatibility callback argument used for root. */
+  /** The actual parent; undefined for the root. */
   parent?: Node;
   /** Zero-based index in the current child collection. */
   index: number;
@@ -33,7 +33,7 @@ export interface WalkOption {
    * Transforms one node. Returning void retains the current node. Root is only
    * included when includeRoot is true.
    */
-  exchange?: (node: Node, parent: Node, context: WalkContext) => Node | void;
+  exchange?: (node: Node, parent: Node | undefined, context: WalkContext) => Node | void;
   /**
    * Runs after members have been visited and filtered, enabling sibling reorganization.
    */
@@ -47,7 +47,7 @@ export interface WalkOption {
    * Runs once when leaving a node, after its child collections and AFTER
    * exchange have completed. Root is only included when includeRoot is true.
    */
-  back?: (node: Node, parent: Node, context: WalkContext) => void;
+  back?: (node: Node, parent: Node | undefined, context: WalkContext) => void;
 }
 
 export type NodeWalk = (node: Node) => Node;
@@ -75,8 +75,8 @@ const setChildCollection = (node: Node, key: WalkChildKey, collection: ChildColl
 };
 
 /**
- * Walks an AST without mutating the input. Existing two-argument callbacks stay
- * compatible; the third argument provides stable traversal context.
+ * Walks an AST without mutating the input. Callbacks receive the actual parent
+ * (undefined for root) and traversal context.
  */
 export const walk = (root: Node, option: WalkOption): Node => {
   const childKeys = option.childKeys ?? ['children'];
@@ -84,10 +84,9 @@ export const walk = (root: Node, option: WalkOption): Node => {
 
   const visit = (node: Node, context: WalkContext, applyCallbacks: boolean): Node => {
     let current = node;
-    const compatibilityParent = context.parent ?? node;
 
     if (applyCallbacks && option.exchange && [ExchangeType.BEFORE, ExchangeType.BOTH].includes(exchangeType)) {
-      current = option.exchange(current, compatibilityParent, context) ?? current;
+      current = option.exchange(current, context.parent, context) ?? current;
     }
 
     for (const key of childKeys) {
@@ -111,10 +110,10 @@ export const walk = (root: Node, option: WalkOption): Node => {
     }
 
     if (applyCallbacks && option.exchange && [ExchangeType.AFTER, ExchangeType.BOTH].includes(exchangeType)) {
-      current = option.exchange(current, compatibilityParent, context) ?? current;
+      current = option.exchange(current, context.parent, context) ?? current;
     }
 
-    if (applyCallbacks) option.back?.(current, compatibilityParent, context);
+    if (applyCallbacks) option.back?.(current, context.parent, context);
     return current;
   };
 
