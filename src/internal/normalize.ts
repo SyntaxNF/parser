@@ -1,5 +1,6 @@
 import { Node, NodeType } from '../type';
 import { SNFParseError } from '../error';
+import { normalizeIndentation } from './layout';
 
 const trivia = (node: Node) => node.type === NodeType.BLANK || node.type === NodeType.WRAP;
 const repeatable = new Set([NodeType.VARIABLE, NodeType.OPTIONAL, NodeType.ENUM, NodeType.QUOTED]);
@@ -23,21 +24,28 @@ function readLoopSeparator(marker: Node[]): string {
   return separator.trim();
 }
 
-/** Bind postfix loops in every syntax container before resolving definitions. */
+/** Normalize layout and bind postfix loops before resolving definitions. */
 export function normalize(root: Node, source: string, block = 0, offset = 0): Node {
   const fail: Fail = (message, node) => {
     throw new SNFParseError(message, source, node.start);
   };
-  const visit = (node: Node): Node => {
+  const lineBreak = (char: string | undefined) => char === '\r' || char === '\n';
+  const visit = (node: Node, quoted = false): Node => {
     if (node.type === NodeType.REPEAT) return fail('Repeat marker outside a postfix loop', node);
+    quoted = quoted || node.type === NodeType.QUOTED;
     const copy: Node = { ...node, sourceBlock: block, start: node.start + offset, end: node.end + offset };
+    if (node.type === NodeType.BLANK && !quoted && node.start > 0 && !lineBreak(source[node.start - 1]))
+      copy.content = ' ';
     if (!node.children) return copy;
     const output: Node[] = [];
     const input = node.children;
     for (let i = 0; i < input.length; i++) {
       const child = input[i];
+      // Classify by physical source lines, not the child's position in a container.
+      if (!quoted && child.type === NodeType.BLANK && (child.end === source.length || lineBreak(source[child.end])))
+        continue;
       if (child.type !== NodeType.LOOP) {
-        const converted = visit(child);
+        const converted = visit(child, quoted);
         if (converted.type === NodeType.GROUP && !(converted.children ?? []).some(value => !trivia(value)))
           return fail('Empty alternative', child);
         output.push(converted);
@@ -75,5 +83,5 @@ export function normalize(root: Node, source: string, block = 0, offset = 0): No
     copy.children = output;
     return copy;
   };
-  return visit(root);
+  return normalizeIndentation(visit(root), source, offset);
 }

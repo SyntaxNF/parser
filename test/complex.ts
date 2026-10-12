@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { glob } from 'glob';
 import { findIdentityCollisions, SNFDocumentParser, NodeType as T } from '../src/index';
 import { nodes } from './helpers';
-const roots = ['mysql', 'postgres', 'oracle', 'sqlserver'].map(r =>
+const roots = ['mysql', 'postgresql', 'oracle', 'sqlserver'].map(r =>
   path.resolve(import.meta.dirname, '../..', r),
 );
-const files = await glob(
-  roots.map(r => path.join(r, '**/*.snf')),
-  { nodir: true },
-);
+async function snfFiles(directory: string): Promise<string[]> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (['.git', 'node_modules', 'dist'].includes(entry.name)) continue;
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await snfFiles(file));
+    else if (entry.name.endsWith('.snf')) files.push(file);
+  }
+  return files;
+}
+const files = (await Promise.all(roots.map(snfFiles))).flat().sort();
 let count = 0;
 let sameSignatureCount = 0;
 const shortHashCollisions: unknown[] = [];
@@ -30,6 +37,8 @@ for (const file of files) {
   const targets = new Set(doc.definitions.map(d => d.ast.uid));
   for (const node of all) {
     assert.match(node.uid!, /^[A-Z]{2}[0-9A-F]{2}-[0-9A-F]{4}-[0-9A-F]{32}-[0-9A-F]{4}$/);
+    if (node.indentLevel !== undefined)
+      assert.ok(Number.isInteger(node.indentLevel) && node.indentLevel >= 0, `${file}: invalid template indentation`);
     if (!node.synthetic)
       assert.equal(doc.blocks[node.sourceBlock!].content.slice(node.start, node.end), node.raw, file);
     if (node.type === T.REFERENCE) assert.ok(targets.has(node.target), file);
@@ -44,7 +53,7 @@ for (const file of files) {
   count += ids.length;
 }
 console.log(
-  `Full repositories passed: ${files.length} files, ${count} final AST nodes; spans, unique IDs, resolved references and repeatability.`,
+  `Full repositories passed: ${files.length} files, ${count} final AST nodes; indentation, spans, unique IDs, resolved references and repeatability.`,
 );
 console.log(
   `Boundary collision audit: ${sameSignatureCount} same-signature prefixes (ordinal fallback), ${shortHashCollisions.length} short-hash collisions.`,

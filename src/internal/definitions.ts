@@ -1,5 +1,6 @@
 import { Node, NodeType, DefinitionKind, TemplateDefinition, TemplateEntry } from '../type';
 import { Production } from './productions';
+import { leadingIndentation, silentIndentation } from './layout';
 
 /** Identify exactly the definitions in recursive strongly connected components. */
 export function findRecursiveDefinitions(definitions: Map<string, Production>): Set<Production> {
@@ -68,29 +69,41 @@ export function createDefinitionExpander(
   let expandedNodes = 0;
   return (root: Node): Node => {
     let result: Node;
-    const pending: Array<{ node: Node; assign: (node: Node) => void }> = [
+    const pending: Array<{ node: Node; shift: number; leading?: Set<Node>; assign: (node: Node) => void }> = [
       {
         node: root,
+        shift: 0,
         assign: node => {
           result = node;
         },
       },
     ];
     while (pending.length) {
-      const { node, assign } = pending.pop()!;
+      const { node, shift, leading, assign } = pending.pop()!;
       if (++expandedNodes > 1_000_000) throw new RangeError('Compiled template exceeds 1000000 nodes');
       let copy: Node = { ...node };
+      if (node.indentLevel !== undefined) {
+        copy.indentLevel = node.indentLevel + shift;
+        if (node.type === NodeType.BLANK) {
+          if (silentIndentation(node) || leading?.has(node)) copy.content = '';
+          else if (shift) copy.content = ' '.repeat(copy.indentLevel * 4);
+        }
+      }
       let children = node.children;
+      let childShift = shift;
+      let childLeading = leading;
       if (node.type === NodeType.VARIABLE && definitions.has(node.content)) {
         const definition = definitions.get(node.content)!;
         const binding = { name: node.content, kind: definition.kind as DefinitionKind };
         if (definition.kind === 'STATEMENT') {
-          copy = { ...node, type: NodeType.STATEMENT, binding, categories: [...definition.tree.categories!] };
+          copy = { ...copy, type: NodeType.STATEMENT, binding, categories: [...definition.tree.categories!] };
         } else if (recursive.has(definition)) {
-          copy = { ...node, type: NodeType.REFERENCE, binding, target: node.content };
+          copy = { ...copy, type: NodeType.REFERENCE, binding, target: node.content };
         } else {
-          copy = { ...node, type: NodeType.COLLECTION, binding };
+          copy = { ...copy, type: NodeType.COLLECTION, binding };
           children = definition.tree.children!;
+          childShift = copy.indentLevel ?? 0;
+          childLeading = leadingIndentation(definition.tree);
         }
       }
       assign(copy);
@@ -100,6 +113,8 @@ export function createDefinitionExpander(
         for (let i = children.length - 1; i >= 0; i--) {
           pending.push({
             node: children[i],
+            shift: childShift,
+            leading: childLeading,
             assign: value => {
               output[i] = value;
             },

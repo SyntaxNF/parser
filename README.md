@@ -69,22 +69,37 @@ STATEMENT 不参与递归或外部加载。引用它的节点带有 `name`、`bi
 | `item [, ...]` | LOOP，children 只有完整 item，separator 为 `,` |
 | `item [...]` | LOOP，separator 为空串，生成时表示空白分隔 |
 | `'text'`、`"text"` | QUOTED，quote 为定界符，children 保留内部语法与空白 |
-| 空格 / 换行 | BLANK / WRAP，保留源码排版 |
+| 空格 / 换行 | BLANK / WRAP，行内空白归一、行首相对缩进、行尾空白移除 |
 | 圆括号、逗号等 | OTHER，SQL 字面符号 |
 
-`[]` 仅表示可选，`{}` 仅表示枚举。未转义的 `|` 必须直接属于 `{}`，`[ A | B ]` 非法。反斜杠转义下一个字符，叶子 `content` 解码，`raw` 保留原始拼写。
+`[]` 仅表示可选，`{}` 仅表示枚举。未转义的 `|` 必须直接属于 `{}`，`[ A | B ]` 非法。反斜杠转义下一个字符，叶子 `content` 解码，`raw` 保留原始拼写。引号外行内空格和 Tab 的 BLANK.content 归一为一个空格，物理行尾（换行前或输入末尾）的 BLANK 从最终 AST 中移除。容器内首尾位置不等同于物理行首尾。空白行上的水平空白按行尾处理。归一化不改写源码、raw 或 start/end。
 
 循环表示完整前项的零次或多次重复；支持变量、可选序列、枚举和完整引号序列。圆括号不是 SNF 分组，重复多字段成员应使用 helper 或 `{ ... }`。重复标记必须恰好包含一个末尾 `...`，分隔符只能包含固定描述。最终 AST 不保留 SPLIT、REPEAT 或孤立引号定界节点。
 
 引号与 `[]`、`{}` 共用递归解析和闭合检查，内部按相同规则解析变量、可选项、枚举、循环和嵌套引号。每个容器必须独立闭合；需要作为普通字符输出的定界符使用反斜杠转义。SQL 成对转义引号（例如 `'IT''S'`）保留在同一个 QUOTED 内；循环可以重复整个引号序列。
 
-引号内的小写占位符仍是输入，不自动变成固定文本。空字符串及普通空白节点会保留，SQL 输出排版和尾逗号处理属于生成器。循环绑定和分隔符规范化在所有容器内使用相同规则：成员与重复标记之间的排版空白不作为重复内容，分隔符内部的排版空白规范化为一个空格并移除首尾空白；raw/start/end 不变。空白原文保留在 AST 中，引号内外都不参与容器特征码，空白节点自身的 UID 也不使用其 content。
+引号内的小写占位符仍是输入，不自动变成固定文本。空字符串及文本空白保留原文，包括嵌套可选项、枚举和引号中的空白，避免改变字符串内容；这不影响统一的特征码规则。SQL 输出排版和尾逗号处理属于生成器。循环绑定和分隔符规范化在所有容器内使用相同规则：成员与重复标记之间的排版空白不作为重复内容，分隔符内部的排版空白规范化为一个空格并移除首尾空白；raw/start/end 不变。空白原文可通过源码和 raw 追溯，引号内外都不参与容器特征码，空白节点自身的 UID 也不使用其 content。
+
+## 缩进
+
+`indentLevel` 表示节点所在输出行的有效缩进，以四列为一层。行首及候选入口的 BLANK 锚点、引号外的内容/容器节点携带该字段；普通单词间的行内 BLANK 不携带。Tab 按四列制表位计算，非四列倍数的外部输入保留分数层级，不自动取整。字段不参与 UID 或功能特征。
+
+- 每个入口、WHERE 定义、ONEOFIS 行或 PARTOFIS 候选去掉共同的前导空白，保留内部相对缩进。
+- 仅包含 SNF 定界符及重复标记的行属于排版行，其额外缩进层会消除。同一物理行上的多个定界符只计算一次，不按 AST 深度累计。
+- 含 SQL 内容的行保留其相对层级。`[ ( {` 中的 `(` 是 SQL 符号，因此其内部八格缩进保留；独占一行的 `{` 所增加的枚举排版层会消除。
+- ENUM 各候选使用首个候选的入口排版和缩进基准，内部相对缩进仍保留。枚举关闭行的公共换行/缩进放到容器之后，避免仅最后一个候选拥有关闭行排版，或在 LOOP 内重复它。
+- helper 在编译阶段按调用所在行的缩进重定位，首行接到调用位置，后续行叠加相对缩进；使用行的缩进，不使用占位符所在字符列。LOOP 每次重复使用相同的层级。
+- SQL 括号、BEGIN/END 所表达的模板排版保留。引号内的文本空白原样保留，不做缩进换算。
+
+生成器应以实际输出的行首节点 `indentLevel` 控制缩进，跳过未选 OPTIONAL、未选 GROUP 和零次 LOOP 产生的空行；不要再次累加已展开 COLLECTION 的父级缩进。递归 REFERENCE 的目标仍是局部定义，运行时展开须以引用节点的 indentLevel 为基准。输出文本来自叶子 `content`，而不是容器的原始 `raw/content`。必要的零缩进换行位置使用合成 BLANK 锚点，排版行上的 BLANK/WRAP.content 可以为空，原文仍可从源码和 raw 追溯。
 
 ## 源码位置
 
 每个非合成节点的 `raw` 等于 `document.blocks[node.sourceBlock].content.slice(node.start, node.end)`。`start/end` 是零起点、左闭右开偏移。独立片段的 sourceBlock 为 0，偏移对应输入字符串。
 
 定义展开后的子节点指向定义来源，COLLECTION 包裹节点指向引用来源，因此不能假设子节点的源码范围包含在父节点范围内。ONEOFIS/PARTOFIS 产生的根和 ENUM 标记 `synthetic: true`，没有单一源码范围（raw 为空、start/end 为 0）。LOOP 的范围包含完整前项和后缀标记，QUOTED 包含两侧引号。
+
+合成 BLANK/WRAP 排版锚点也标记 synthetic，raw 为空，start/end 相等并指向插入位置；普通节点的源码范围不随排版移动或 helper 重定位而改变。
 
 ## UID 与名称
 
@@ -140,6 +155,7 @@ for (const { kind, prefix, occurrences } of collisions) {
 | `src/internal/compiler.ts` | 串联编译、元数据分配和引用绑定 |
 | `src/internal/productions.ts` | 声明收集、指令检查、内容树构建、源码错误定位与依赖收集 |
 | `src/internal/syntax.ts` / `normalize.ts` | 基础记号与递归容器解析、完整循环成员绑定 |
+| `src/internal/layout.ts` | 相对缩进、纯 SNF 排版层、候选公共边界和 helper 调用行基准 |
 | `src/internal/definitions.ts` | 递归检测、本地定义展开和引用目标绑定 |
 | `src/internal/identity.ts` / `definition-context.ts` / `hash.ts` | 功能标识与名称规则、作用域状态、UID 编码与哈希 |
 | `src/internal/boundary-identity.ts` / `src/identity-collisions.ts` | QUOTED / OPTIONAL / GROUP 后序局部特征、短码碰撞与重复特征诊断 |
@@ -149,9 +165,10 @@ for (const { kind, prefix, occurrences } of collisions) {
 ```sh
 pnpm test
 pnpm test:uid
+pnpm test:indent
 pnpm exec tsc --noEmit
 pnpm build
 pnpm test:complex
 ```
 
-`build` 清理 dist 后生成 ESM 与类型声明。单测覆盖完整编译、递归绑定、STATEMENT、引号与循环、命名与 UID 稳定性、真实四位容器短码碰撞和溢出。`test:uid` 包含三类节点的换序、插入、改名、直接子级边界、深层遍历与碰撞传播回归。`test:complex` 对同级四库全部 SNF 检查最终节点、来源范围、引用目标、UID 唯一性和重新解析确定性，同时汇总重复特征；四位短码导致完整前缀碰撞时测试失败并给出来源。遵守各库的验证授权要求。
+`build` 清理 dist 后生成 ESM 与类型声明。单测覆盖完整编译、递归绑定、STATEMENT、引号与循环、命名与 UID 稳定性、真实四位容器短码碰撞和溢出。`test:uid` 包含三类节点的换序、插入、改名、直接子级边界、深层遍历与碰撞传播回归。`test:indent` 验证相对缩进、混合定界行、helper、重复项和四库真实模板的排版，并由 `test` 一并运行。`test:complex` 对同级四库全部 SNF 检查缩进层级、最终节点、来源范围、引用目标、UID 唯一性和重新解析确定性，同时汇总重复特征；四位短码导致完整前缀碰撞时测试失败并给出来源。遵守各库的验证授权要求。

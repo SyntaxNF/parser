@@ -22,6 +22,7 @@ export type QuoteCharacter = `'` | `"`;
 
 export interface Node {
   type: NodeType;
+  /** Decoded leaf text (inline BLANK is normalized); source text for containers. */
   content: string;
   /** The exact source text represented by this node. */
   raw: string;
@@ -33,7 +34,9 @@ export interface Node {
   name?: string;
   /** Source block index; offsets refer to that block's content. */
   sourceBlock?: number;
-  /** Synthetic containers have no single source span. */
+  /** Effective line indentation in four-column units; excluded from UID features. */
+  indentLevel?: number;
+  /** Synthetic containers or zero-width layout anchors have no complete source span. */
   synthetic?: boolean;
   /** A complete LOOP repeats children with this decoded delimiter (empty means whitespace). */
   separator?: string;
