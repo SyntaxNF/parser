@@ -1,7 +1,7 @@
 {
   "name": "snf-parser",
   "version": "0.2.3",
-  "description": "A parser for SNF (Simple Normal Form) grammar",
+  "description": "A parser and compiler for SNF (Syntax Normal Form) templates",
   "type": "module",
   "author": "baskwind <baskwind@163.com>",
   "license": "MIT",
