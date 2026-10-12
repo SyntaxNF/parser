@@ -21,30 +21,30 @@ jobs:
         with:
           path: parser
 
-      # Integration tests read SQL templates from sibling repositories.
+      # Tests discover every .snf file under the sibling templates directory.
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/postgresql
           ref: main
-          path: postgresql
+          path: templates/postgresql
 
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/sqlserver
           ref: main
-          path: sqlserver
+          path: templates/sqlserver
 
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/mysql
           ref: main
-          path: mysql
+          path: templates/mysql
 
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/oracle
           ref: main
-          path: oracle
+          path: templates/oracle
 
       - uses: actions/setup-node@v6
         with:

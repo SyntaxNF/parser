@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Node, NodeType as T, ParseOptions, SimpleNode, SNFDocumentParser, SNFParseError, SNFParser } from '../src/index';
 import { simpleNode } from '../src/internal/simple';
+import { templateFiles, templateName } from './template-files';
 
 const sourceFields = ['raw', 'start', 'end', 'sourceBlock', 'synthetic'];
 function nodes(root: Node | SimpleNode): (Node | SimpleNode)[] {
@@ -134,16 +135,30 @@ test('simple conversion is iterative and does not mutate the source tree or shar
   assert.deepEqual(tail.categories, ['SQL']);
 });
 
-test('a real expanded PostgreSQL template produces smaller serializable JSON with the same runtime UIDs', () => {
-  const source = readFileSync(new URL('../../postgresql/create/table.snf', import.meta.url), 'utf8');
-  const parser = new SNFDocumentParser();
-  const full = parser.parse(source), simple = parser.parse(source, { simple: true });
-  const fullNodes = [...full.entries, ...full.definitions].flatMap(item => nodes(item.ast));
-  const simpleNodes = [...simple.entries, ...simple.definitions].flatMap(item => nodes(item.ast));
-  assert.deepEqual(simpleNodes.map(node => node.uid), fullNodes.map(node => node.uid));
-  const fullBytes = Buffer.byteLength(JSON.stringify(full));
-  const simpleBytes = Buffer.byteLength(JSON.stringify(simple));
-  assert.ok(simpleBytes < fullBytes);
-  assert.equal(JSON.parse(JSON.stringify(simple)).definitions.length, full.definitions.length);
-  console.log(`PostgreSQL create/table JSON: ${fullBytes} -> ${simpleBytes} bytes (${(100 * (1 - simpleBytes / fullBytes)).toFixed(1)}% smaller).`);
-});
+for (const file of templateFiles()) {
+  const name = templateName(file);
+  test(`real ${name} produces smaller serializable JSON with the same runtime structure`, () => {
+    const source = readFileSync(file, 'utf8');
+    const parser = new SNFDocumentParser();
+    const full = parser.parse(source), simple = parser.parse(source, { simple: true });
+    const fullNodes = [...full.entries, ...full.definitions].flatMap(item => nodes(item.ast));
+    const simpleNodes = [...simple.entries, ...simple.definitions].flatMap(item => nodes(item.ast));
+    assert.equal(simpleNodes.length, fullNodes.length);
+    for (const field of ['type', 'uid', 'name', 'indentLevel', 'quote', 'separator', 'binding', 'categories', 'target'] as const)
+      assert.deepEqual(simpleNodes.map(node => node[field]), fullNodes.map(node => node[field]), field);
+    for (const [index, node] of simpleNodes.entries()) {
+      for (const field of sourceFields) assert.equal(Object.hasOwn(node, field), false);
+      if (!node.children || node.type === T.COLLECTION) assert.equal(node.content, fullNodes[index].content);
+      else assert.equal(Object.hasOwn(node, 'content'), false);
+    }
+    const targets = new Set(simple.definitions.map(definition => definition.ast.uid));
+    for (const node of simpleNodes) if (node.type === T.REFERENCE) assert.ok(targets.has(node.target));
+    const json = JSON.stringify(simple);
+    const fullBytes = Buffer.byteLength(JSON.stringify(full));
+    const simpleBytes = Buffer.byteLength(json);
+    assert.ok(simpleBytes < fullBytes);
+    assert.equal(JSON.parse(json).entries.length, full.entries.length);
+    assert.equal(JSON.parse(json).definitions.length, full.definitions.length);
+    console.log(`${name} JSON: ${fullBytes} -> ${simpleBytes} bytes (${(100 * (1 - simpleBytes / fullBytes)).toFixed(1)}% smaller).`);
+  });
+}

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Node, NodeType as T, SNFDocumentParser, SNFParser } from '../src/index';
 import { nodes } from './helpers';
@@ -74,7 +73,6 @@ function render(root: Node, options: Options = {}): string {
 
 const parse = (source: string) => new SNFParser().parse(source);
 const document = (source: string) => new SNFDocumentParser().parse(source);
-const file = (repo: string, name: string) => document(readFileSync(new URL(`../../${repo}/${name}`, import.meta.url), 'utf8'));
 
 test('generation spaces only optional/group boundaries, retaining literal token joins', () => {
   const ast = parse('SELECT[ DISTINCT]{schema.table|other}[ AS alias]');
@@ -164,37 +162,29 @@ test('quoted whitespace, including nested syntax, is unaffected by indentation r
   assert.ok(nodes(quote).filter(node => node.type === T.BLANK).every(node => node.content === node.raw));
 });
 
-test('PostgreSQL NORMAL and TYPE column blocks consistently use the statement-line opening parentheses', () => {
-  const doc = file('postgresql', 'create/table.snf');
-  const count = (node: Node) => /(?:typed_)?column_definition \|/.test(node.children![0].raw) ? 2 : 0;
+test('named table variants consistently use statement-line opening parentheses', () => {
+  const doc = document('# CASE NORMAL\nCREATE TABLE name (\n    column_definition [, ...]\n)\n\n# CASE TYPE\nCREATE TABLE name OF type [ (\n    typed_column_definition [, ...]\n) ]\n\n# WHERE column_definition\ncolname type\n\n# WHERE typed_column_definition\ncolname WITH OPTIONS');
+  const count = () => 2;
   const normal = doc.entries.find(entry => entry.name === 'NORMAL')!.ast;
   assert.equal(render(normal, { include: () => false, count }), 'CREATE TABLE name (\n    colname type,\n    colname type\n)');
   const typed = doc.entries.find(entry => entry.name === 'TYPE')!.ast;
-  assert.equal(render(typed, { include: node =>
-    (node.name === '(' && nodes(node).some(child => child.binding?.name === 'typed_column_definition')) || node.raw === '[ WITH OPTIONS ]', count }),
+  assert.equal(render(typed, { count }),
     'CREATE TABLE name OF type (\n    colname WITH OPTIONS,\n    colname WITH OPTIONS\n)');
 });
 
-test('SQL Server helper enums and MySQL definition alternatives inherit the table member indentation', () => {
-  for (const repo of ['sqlserver', 'mysql']) {
-    const ast = file(repo, 'create/table.snf').entries[0].ast;
-    const member = repo === 'sqlserver' ? 'table_element_definition' : 'create_definition';
-    const result = render(ast, { include: () => false, count: node => node.children![0].binding?.name === member ? 2 : 0 });
-    assert.ok(result.startsWith('CREATE TABLE name (\n    colname '));
-    assert.ok(!result.includes('\n        colname '));
-    assert.ok(result.includes(',\n    colname '));
-  }
+test('helper enums and definition alternatives inherit table member indentation', () => {
+  const ast = document('CREATE TABLE name (\n    table_member [, ...]\n)\n\n# WHERE table_member\n{\n    column_definition |\n    constraint_definition\n}\n\n# WHERE column_definition\ncolname type\n\n# WHERE constraint_definition\nCONSTRAINT name').entries[0].ast;
+  assert.equal(render(ast, { count: () => 2 }), 'CREATE TABLE name (\n    colname type,\n    colname type\n)');
 });
 
-test('Oracle package helper alternatives preserve declaration and continuation indentation', () => {
-  const ast = file('oracle', 'create/package.snf').entries[0].ast;
+test('package helper alternatives preserve declaration and continuation indentation', () => {
+  const ast = document('CREATE PACKAGE name AS\n    declaration [...]\nEND ;\n\n# PARTOFIS declaration\nPROCEDURE procedure_name;\n\nFUNCTION function_name\n    RETURN type;').entries[0].ast;
   const result = render(ast, {
     include: () => false,
     choose: node => node.children?.some(group => group.raw.includes('FUNCTION function_name')) ? 1 : 0,
-    count: node => node.children![0].binding?.name === 'package_item_definition' ? 2 : 0,
+    count: () => 2,
   });
-  assert.ok(result.includes('\n    FUNCTION function_name'));
-  assert.ok(result.endsWith('\nEND ;'));
+  assert.equal(result, 'CREATE PACKAGE name AS\n    FUNCTION function_name\n        RETURN type;\n    FUNCTION function_name\n        RETURN type;\nEND ;');
 });
 
 test('indent metadata remains deterministic, does not influence UID reassignment and retains definition source spans', () => {

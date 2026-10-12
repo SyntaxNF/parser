@@ -1,23 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { findIdentityCollisions, SNFDocumentParser, NodeType as T } from '../src/index';
 import { nodes } from './helpers';
-const roots = ['mysql', 'postgresql', 'oracle', 'sqlserver'].map(r =>
-  path.resolve(import.meta.dirname, '../..', r),
-);
-async function snfFiles(directory: string): Promise<string[]> {
-  const entries = await fs.readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (['.git', 'node_modules', 'dist'].includes(entry.name)) continue;
-    const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await snfFiles(file));
-    else if (entry.name.endsWith('.snf')) files.push(file);
-  }
-  return files;
-}
-const files = (await Promise.all(roots.map(snfFiles))).flat().sort();
+import { templateFiles } from './template-files';
+const files = templateFiles();
 let count = 0;
 let sameSignatureCount = 0;
 let fullBytes = 0, simpleBytes = 0;

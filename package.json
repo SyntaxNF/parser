@@ -27,7 +27,7 @@
     }
   },
   "scripts": {
-    "test": "tsx test/index.ts && tsx test/uid.ts && tsx test/boundary-identity.ts && tsx test/name.ts && tsx test/metadata.ts && tsx test/normalize.ts && tsx test/compiler.ts && tsx test/indentation.ts && tsx test/simple.ts",
+    "test": "tsx test/index.ts && tsx test/uid.ts && tsx test/boundary-identity.ts && tsx test/name.ts && tsx test/metadata.ts && tsx test/normalize.ts && tsx test/compiler.ts && tsx test/indentation.ts && tsx test/template-files.test.ts && tsx test/simple.ts && tsx test/complex.ts",
     "test:simple": "tsx test/simple.ts",
     "test:indent": "tsx test/indentation.ts",
     "test:name": "tsx test/name.ts",
