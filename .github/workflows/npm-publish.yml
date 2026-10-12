@@ -12,15 +12,57 @@ jobs:
   publish:
     if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: parser
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: parser
+
+      # Integration tests read SQL templates from sibling repositories.
+      - uses: actions/checkout@v6
+        with:
+          repository: SyntaxNF/postgresql
+          ref: ce692e1d0e1b8d1876bee491d6292824d65902dd
+          path: postgresql
+
+      - uses: actions/checkout@v6
+        with:
+          repository: SyntaxNF/sqlserver
+          ref: a55ba8bb327a3bcee5d6c192202a2b0d7ebfa8b5
+          path: sqlserver
+
+      - uses: actions/checkout@v6
+        with:
+          repository: SyntaxNF/mysql
+          ref: 10494459a48c45bad9220783591d158680ab1a8c
+          path: mysql
+
+      - uses: actions/checkout@v6
+        with:
+          repository: SyntaxNF/oracle
+          ref: 10017725141bcc75e20ec500dce7515c379aa3a3
+          path: oracle
 
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node <<'NODE'
+          const { version } = require('./package.json');
+          const expectedTag = `v${version}`;
+          if (process.env.RELEASE_TAG !== expectedTag) {
+            throw new Error(`Release tag must be ${expectedTag}, got ${process.env.RELEASE_TAG}`);
+          }
+          NODE
 
       - uses: pnpm/action-setup@v6
         with:

@@ -1,12 +1,15 @@
 {
   "name": "snf-parser",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A parser for SNF (Simple Normal Form) grammar",
   "type": "module",
   "author": "baskwind <baskwind@163.com>",
   "license": "MIT",
-  "homepage": "https://github.com/SimpleNF/parser",
-  "repository": "https://github.com/SimpleNF/parser",
+  "homepage": "https://github.com/SyntaxNF/parser",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyntaxNF/parser.git"
+  },
   "keywords": [
     "snf",
     "parser"
