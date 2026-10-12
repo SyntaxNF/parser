@@ -141,14 +141,15 @@ test('quoted whitespace, including nested syntax, is unaffected by indentation r
   assert.ok(nodes(quote).filter(node => node.type === T.BLANK).every(node => node.content === node.raw));
 });
 
-test('PostgreSQL NORMAL and TYPE create-table entries retain the distinct one- and two-level layouts', () => {
+test('PostgreSQL NORMAL and TYPE column blocks consistently use the statement-line opening parentheses', () => {
   const doc = file('postgresql', 'create/table.snf');
   const count = (node: Node) => /(?:typed_)?column_definition \|/.test(node.children![0].raw) ? 2 : 0;
   const normal = doc.entries.find(entry => entry.name === 'NORMAL')!.ast;
   assert.equal(render(normal, { include: () => false, count }), 'CREATE TABLE name (\n    colname type,\n    colname type\n)');
   const typed = doc.entries.find(entry => entry.name === 'TYPE')!.ast;
-  assert.equal(render(typed, { include: node => node.raw.startsWith('[ ( {') || node.raw === '[ WITH OPTIONS ]', count }),
-    'CREATE TABLE name OF type\n    (\n        colname WITH OPTIONS,\n        colname WITH OPTIONS\n    )');
+  assert.equal(render(typed, { include: node =>
+    (node.name === '(' && nodes(node).some(child => child.binding?.name === 'typed_column_definition')) || node.raw === '[ WITH OPTIONS ]', count }),
+    'CREATE TABLE name OF type (\n    colname WITH OPTIONS,\n    colname WITH OPTIONS\n)');
 });
 
 test('SQL Server helper enums and MySQL definition alternatives inherit the table member indentation', () => {
