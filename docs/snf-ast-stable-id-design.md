@@ -32,7 +32,7 @@
 - 递归引用 REFERENCE 保存 binding、name 和已解析 target。目标内容在 definitions 中，不做无限展开。
 - STATEMENT 保存名称和类别标签。类别不作为 SNF 内容解析；类别顺序与拼写按原文保留。
 - QUOTED 保留完整引号序列（包括空序列）和内部空白原文；空白不参与局部特征。
-- 引号外 BLANK 按物理源码行处理：行内 content 归一为一个空格，行首采用相对缩进，行尾节点移除。纯 SNF 定界行的额外缩进消除，SQL 内容同行的相对层级保留。同一行的多个定界符不重复扣层级。
+- 引号外普通行内 BLANK 归一为单空格并保留，行尾节点移除。缩进处理和定义展开后、UID 分配前，仅清理 OPTIONAL / GROUP 首尾排版区域中不带 indentLevel 的 BLANK，保留换行和缩进锚点；引号内不清理。生成器为引号外非空 OPTIONAL / GROUP 提供边界间隔，其他节点按模板连接。纯 SNF 定界行的额外缩进消除，SQL 内容同行的相对层级保留。同一行的多个定界符不重复扣层级。
 - `indentLevel` 以四列为一层，helper 编译时以调用行重定位，循环重复项使用同一基准；它不参与 UID。原始源码及 raw/start/end 保留，必要的零缩进行使用合成 BLANK 锚点。
 - ENUM 候选共用入口排版；关闭行的公共 BLANK/WRAP 位于容器之后，不随 LOOP 重复。排版行的 BLANK/WRAP.content 可以为空，引号内空白原样保留。
 
@@ -110,7 +110,7 @@ COLLECTION 与其被替换的变量一样，使用调用位置的功能标识；
 | OTHER | `['T', 'O']`，包括 SQL 成对转义引号及其他固定符号，只贡献类型 |
 | 其他类型 | `['T', 类型名称首字母]`，例如 VARIABLE→V、ENUM→E、LOOP→L、COLLECTION→C、OPTIONAL→O、GROUP→G |
 
-变量名、变量值、helper 名、name、UID、源码位置不参与局部特征。类别标签区分固定定义 `V` 与变量类型 V、固定数字与其他类型。父节点不访问孙节点；OPTIONAL / GROUP 等普通容器的内容和短码不向父级暴露，QUOTED 提供已算好的短码和引号类型。父节点也不使用子节点 UID 或同前缀序号。空白和固定符号的原文通过源码与 raw 保存，BLANK.content 可为归一化文本，行尾 BLANK 不进入最终 AST；OTHER 叶子自身的 UID 仍使用 content。
+变量名、变量值、helper 名、name、UID、源码位置不参与局部特征。类别标签区分固定定义 `V` 与变量类型 V、固定数字与其他类型。父节点不访问孙节点；OPTIONAL / GROUP 等普通容器的内容和短码不向父级暴露，QUOTED 提供已算好的短码和引号类型。父节点也不使用子节点 UID 或同前缀序号。空白和固定符号的原文通过源码与 raw 保存，缩进锚点的 BLANK.content 可为归一化文本，引号外行尾及 OPTIONAL / GROUP 边界的普通 BLANK 不进入最终 AST；OTHER 叶子自身的 UID 仍使用 content。
 
 短码协议：对直接子级特征数组的 JSON 编码做 UTF-8 SHA-256，将完整 256 位摘要按无符号大端整数取模 `36⁴ = 1,679,616`，转大写 Base36，左侧补 0 到 4 位。每个容器压缩一次，不对内部各个定义单独做短哈希。空容器使用 `[]` 的哈希，不返回 null。浏览器与 Node 使用同一算法，不依赖外部名称表或历史结果。
 

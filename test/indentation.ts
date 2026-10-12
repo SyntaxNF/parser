@@ -57,6 +57,14 @@ function render(root: Node, options: Options = {}): string {
       }
       return;
     }
+    if (!literal && (node.type === T.OPTIONAL || node.type === T.GROUP)) {
+      const before = output, pendingSpace = space;
+      emit(' ', level, false);
+      node.children!.forEach(child => visit(child, literal));
+      if (output !== before) emit(' ', level, false);
+      else space = pendingSpace;
+      return;
+    }
     if (node.children) node.children.forEach(child => visit(child, literal));
     else emit(node.content, level, literal);
   };
@@ -67,6 +75,21 @@ function render(root: Node, options: Options = {}): string {
 const parse = (source: string) => new SNFParser().parse(source);
 const document = (source: string) => new SNFDocumentParser().parse(source);
 const file = (repo: string, name: string) => document(readFileSync(new URL(`../../${repo}/${name}`, import.meta.url), 'utf8'));
+
+test('generation spaces only optional/group boundaries, retaining literal token joins', () => {
+  const ast = parse('SELECT[ DISTINCT]{schema.table|other}[ AS alias]');
+  assert.equal(render(ast), 'SELECT DISTINCT schema.table AS alias');
+  assert.equal(render(ast, { include: () => false }), 'SELECT schema.table');
+  assert.equal(render(ast, { include: () => false, choose: () => 1 }), 'SELECT other');
+  assert.equal(render(parse('SELECT item[, ...] FROM table'), { count: () => 0 }), 'SELECT FROM table');
+  assert.equal(render(parse("SELECT 'A [ B ] C' FROM table")), "SELECT 'A  B  C' FROM table");
+  const literal = parse("LANGUAGE = { 'language' | N'language' }");
+  assert.equal(render(literal), "LANGUAGE = 'language'");
+  assert.equal(render(literal, { choose: () => 1 }), "LANGUAGE = N'language'");
+  assert.equal(render(parse(String.raw`SELECT schema.table, func(arg), @variable, \[DEFAULT\]`)),
+    'SELECT schema.table, func(arg), @variable, [DEFAULT]');
+  assert.equal(render(parse("N[ optional ]'language'"), { include: () => false }), "N'language'");
+});
 
 test('a standalone SNF enumeration removes its extra indentation without affecting SQL parentheses', () => {
   const source = 'CREATE TABLE name (\n    {\n        item |\n        other\n    } [, ...]\n)';

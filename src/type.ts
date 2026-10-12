@@ -27,7 +27,7 @@ export interface ParseOptions {
 
 export interface Node {
   type: NodeType;
-  /** Decoded leaf text (inline BLANK is normalized); source text for containers. */
+  /** Decoded leaf text (unquoted inline BLANKs are normalized); source text for containers. */
   content: string;
   /** The exact source text represented by this node. */
   raw: string;

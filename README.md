@@ -88,10 +88,10 @@ STATEMENT 不参与递归或外部加载。引用它的节点带有 `name`、`bi
 | `item [, ...]` | LOOP，children 只有完整 item，separator 为 `,` |
 | `item [...]` | LOOP，separator 为空串，生成时表示空白分隔 |
 | `'text'`、`"text"` | QUOTED，quote 为定界符，children 保留内部语法与空白 |
-| 空格 / 换行 | BLANK / WRAP，行内空白归一、行首相对缩进、行尾空白移除 |
+| 空格 / 换行 | BLANK / WRAP，行内空白归一、行首相对缩进、行尾空白移除；清理引号外 OPTIONAL / GROUP 的边界排版空格 |
 | 圆括号、逗号等 | OTHER，SQL 字面符号 |
 
-`[]` 仅表示可选，`{}` 仅表示枚举。未转义的 `|` 必须直接属于 `{}`，`[ A | B ]` 非法。反斜杠转义下一个字符，叶子 `content` 解码，`raw` 保留原始拼写。引号外行内空格和 Tab 的 BLANK.content 归一为一个空格，物理行尾（换行前或输入末尾）的 BLANK 从最终 AST 中移除。容器内首尾位置不等同于物理行首尾。空白行上的水平空白按行尾处理。归一化不改写源码、raw 或 start/end。
+`[]` 仅表示可选，`{}` 仅表示枚举。未转义的 `|` 必须直接属于 `{}`，`[ A | B ]` 非法。反斜杠转义下一个字符，叶子 `content` 解码，`raw` 保留原始拼写。引号外普通行内空格和 Tab 的 BLANK.content 归一为一个空格并保留；无空格的相邻叶子仍直接连接。物理行尾（换行前或输入末尾）及空白行上的水平空白移除。循环绑定、缩进归一和定义展开完成后、分配 UID 前，仅删除引号外 OPTIONAL / GROUP 首尾排版区域中不带 indentLevel 的 BLANK；保留其中的 WRAP 和缩进锚点，以及容器内部词之间的 BLANK。引号内部，包括嵌套容器和展开的 helper，不做边界空格清理。源码、raw 和 start/end 不改写。
 
 循环表示完整前项的零次或多次重复；支持变量、可选序列、枚举和完整引号序列。圆括号不是 SNF 分组，重复多字段成员应使用 helper 或 `{ ... }`。重复标记必须恰好包含一个末尾 `...`，分隔符只能包含固定描述。最终 AST 不保留 SPLIT、REPEAT 或孤立引号定界节点。
 
@@ -101,7 +101,7 @@ STATEMENT 不参与递归或外部加载。引用它的节点带有 `name`、`bi
 
 ## 缩进
 
-`indentLevel` 表示节点所在输出行的有效缩进，以四列为一层。行首及候选入口的 BLANK 锚点、引号外的内容/容器节点携带该字段；普通单词间的行内 BLANK 不携带。Tab 按四列制表位计算，非四列倍数的外部输入保留分数层级，不自动取整。字段不参与 UID 或功能特征。
+`indentLevel` 表示节点所在输出行的有效缩进，以四列为一层。行首及候选入口的 BLANK 锚点、引号外的内容/容器节点携带该字段；普通单词间的行内 BLANK 保留，但不携带该字段。Tab 按四列制表位计算，非四列倍数的外部输入保留分数层级，不自动取整。字段不参与 UID 或功能特征。
 
 - 每个入口、WHERE 定义、ONEOFIS 行或 PARTOFIS 候选去掉共同的前导空白，保留内部相对缩进。
 - 仅包含 SNF 定界符及重复标记的行属于排版行，其额外缩进层会消除。同一物理行上的多个定界符只计算一次，不按 AST 深度累计。
@@ -111,6 +111,14 @@ STATEMENT 不参与递归或外部加载。引用它的节点带有 `name`、`bi
 - SQL 括号、BEGIN/END 所表达的模板排版保留。引号内的文本空白原样保留，不做缩进换算。
 
 生成器应以实际输出的行首节点 `indentLevel` 控制缩进，跳过未选 OPTIONAL、未选 GROUP 和零次 LOOP 产生的空行；不要再次累加已展开 COLLECTION 的父级缩进。递归 REFERENCE 的目标仍是局部定义，运行时展开须以引用节点的 indentLevel 为基准。输出文本来自叶子 `content`，而不是容器的原始 `raw/content`。必要的零缩进换行位置使用合成 BLANK 锚点，排版行上的 BLANK/WRAP.content 可以为空，原文仍可从源码和 raw 追溯。
+
+## 生成时的分组间隔
+
+引号外实际输出内容的 OPTIONAL / GROUP 在左右提供一个空格，与现有水平空白合并；行首、行尾及换行旁不额外输出空格。未选 OPTIONAL、零次 LOOP 或展开后没有内容的分组不产生间隔。ENUM 由选中的 GROUP 提供间隔，ROOT / COLLECTION / LOOP 不自动补边界空格，循环使用 separator。
+
+其余节点按叶子 content 和保留的 BLANK 拼接，不对每对节点自动加空格或推断标点连接。QUOTED 内保留原有空白，不补分组间隔；调用方提供的自由输入文本也应原样保留。这些规则同样适用于 `{ simple: true }`。
+
+需要紧贴的前缀应和后续内容放在同一个完整候选里，例如使用 `LANGUAGE = { 'language' | N'language' }`，而非 `LANGUAGE = [ N ] 'language'`；`@@GLOBAL.system_variable` 同理。这样生成器只处理分组边界，无需识别 SQL 前缀。`schema.table`、`func(arg)` 和 `\[DEFAULT\]` 的内部连接由模板直接表达。
 
 ## 源码位置
 

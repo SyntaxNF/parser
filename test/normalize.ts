@@ -115,10 +115,10 @@ test('container boundaries do not count as physical line boundaries', () => {
   const source = '[   A   \r\n    B  ]\r\n{   C   |   D   }   ';
   const ast = new SNFParser().parse(source);
   const optional = nodes(ast).find(node => node.type === T.OPTIONAL)!;
-  assert.deepEqual(optional.children!.filter(node => node.type === T.BLANK).map(node => node.content), ['', '    ', ' ']);
+  assert.deepEqual(optional.children!.filter(node => node.type === T.BLANK).map(node => node.content), ['    ']);
   assert.ok(!nodes(ast).some(node => node.type === T.BLANK && node.end === source.length));
   for (const group of nodes(ast).filter(node => node.type === T.GROUP))
-    assert.deepEqual(group.children!.filter(node => node.type === T.BLANK).map(node => node.content), ['']);
+    assert.deepEqual(group.children!.filter(node => node.type === T.BLANK).map(node => node.content), []);
   for (const node of nodes(ast)) assert.equal(node.raw, source.slice(node.start, node.end));
 });
 
@@ -175,4 +175,32 @@ test('escaped text and error locations are unaffected by layout normalization', 
   assert.throws(() => new SNFDocumentParser().parse(invalid), (error: unknown) =>
     error instanceof SNFParseError && error.offset === invalid.indexOf('|') && error.line === 2,
   );
+});
+
+test('boundary trimming runs after expansion and protects quoted helper instances', () => {
+  const source = `SELECT item 'item' [ { A input | B input } ]\n\n# WHERE item\nFIRST value [ LAST other ]`;
+  for (const simple of [false, true]) {
+    const doc = new SNFDocumentParser().parse(source, { simple });
+    const optional = doc.definitions[0].ast.children!.find(node => node.type === T.OPTIONAL)!;
+    assert.deepEqual(optional.children!.map(node => node.content), ['LAST', ' ', 'other']);
+    const quote = doc.entries[0].ast.children!.find(node => node.type === T.QUOTED)!;
+    const quotedHelper = quote.children!.find(node => node.type === T.COLLECTION)!;
+    const quotedOptional = quotedHelper.children!.find(node => node.type === T.OPTIONAL)!;
+    assert.deepEqual(quotedOptional.children!.map(node => node.content), [' ', 'LAST', ' ', 'other', ' ']);
+    assert.equal(doc.definitions[0].ast.children!.filter(node => node.type === T.BLANK).length, 2);
+    assert.deepEqual(new SNFDocumentParser().parse(source, { simple }), doc);
+  }
+});
+
+test('full and simple fragments trim only optional/group padding, keeping internal spacing and joins', () => {
+  for (const simple of [false, true]) {
+    const ast = new SNFParser().parse("SELECT [ DISTINCT column ] { schema.table | N'language' } item [ OR ELSE ... ]", { simple });
+    const optional = ast.children!.find(node => node.type === T.OPTIONAL)!;
+    assert.deepEqual(optional.children!.map(node => node.content), ['DISTINCT', ' ', 'column']);
+    const groups = ast.children!.find(node => node.type === T.ENUM)!.children!;
+    assert.deepEqual(groups[0].children!.map(node => node.content), ['schema', '.', 'table']);
+    assert.deepEqual(groups[1].children!.map(node => node.type), [T.DEFINITION, T.QUOTED]);
+    assert.ok(ast.children!.some(node => node.type === T.BLANK && node.content === ' '));
+    assert.equal(ast.children!.at(-1)!.separator, 'OR ELSE');
+  }
 });

@@ -251,3 +251,22 @@ export function leadingIndentation(root: Node): Set<Node> {
 }
 
 export const silentIndentation = (node: Node): boolean => layoutOnly.has(node);
+
+/** Trim optional/branch padding after layout and expansion, retaining token spacing. */
+export function trimBoundaryBlanks(root: Node): Node {
+  const pending = [root];
+  while (pending.length) {
+    const node = pending.pop()!;
+    // A quote owns all nested text, including optional/enum/helper contents.
+    if (node.type === T.QUOTED || !node.children) continue;
+    if (node.type === T.OPTIONAL || node.type === T.GROUP) {
+      let first = 0, last = node.children.length;
+      while (first < last && trivia(node.children[first])) first++;
+      while (last > first && trivia(node.children[last - 1])) last--;
+      node.children = node.children.filter((child, index) =>
+        (index >= first && index < last) || child.type !== T.BLANK || child.indentLevel !== undefined);
+    }
+    for (const child of node.children) pending.push(child);
+  }
+  return root;
+}

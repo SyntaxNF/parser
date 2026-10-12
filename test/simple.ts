@@ -84,11 +84,13 @@ test('simple documents retain input bindings, STATEMENT categories and resolved 
 test('a runtime renderer uses simple nodes without template snippets or source positions', () => {
   const source = 'BEGIN\n    item [...]\nEND\n\n# WHERE item\nVALUE x [ { ASC | DESC } ]';
   const doc = new SNFDocumentParser().parse(source, { simple: true });
-  const render = (node: SimpleNode): string => {
-    if (node.type === T.ENUM) return render(node.children![0]);
-    if (node.type === T.LOOP) return [render(node.children![0]), render(node.children![0])].join(node.separator || ' ');
-    if (node.type === T.QUOTED) return node.quote! + node.children!.map(render).join('') + node.quote!;
-    return node.children ? node.children.map(render).join('') : node.content ?? '';
+  const render = (node: SimpleNode, quoted = false): string => {
+    const children = () => node.children!.map(child => render(child, quoted)).join('');
+    if (node.type === T.ENUM) return render(node.children![0], quoted);
+    if (node.type === T.LOOP) return [render(node.children![0], quoted), render(node.children![0], quoted)].join(node.separator || ' ');
+    if (node.type === T.QUOTED) return node.quote! + node.children!.map(child => render(child, true)).join('') + node.quote!;
+    const text = node.children ? children() : node.content ?? '';
+    return !quoted && [T.OPTIONAL, T.GROUP].includes(node.type) && text.trim() ? ` ${text} ` : text;
   };
   assert.equal(render(doc.entries[0].ast).replace(/\s+/g, ' ').trim(), 'BEGIN VALUE x ASC VALUE x ASC END');
 });

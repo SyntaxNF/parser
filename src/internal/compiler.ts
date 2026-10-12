@@ -2,6 +2,7 @@ import { Block, DefinitionKind, DocumentLine, SNFDocument, TemplateDefinition, T
 import { buildProductions } from './productions';
 import { bindReferenceTargets, createDefinitionExpander, findRecursiveDefinitions } from './definitions';
 import { createIdentityAllocator } from './identity';
+import { trimBoundaryBlanks } from './layout';
 
 /** Compile structure first, assign final metadata, then bind recursive targets. */
 export function compileDocument(content: string, lines: DocumentLine[], blocks: Block[]): SNFDocument {
@@ -16,7 +17,7 @@ export function compileDocument(content: string, lines: DocumentLine[], blocks: 
     name: production.names[0],
     blocks: [...production.blocks],
     dependencies: [...production.dependencies],
-    ast: identify(expand(production.tree)),
+    ast: identify(trimBoundaryBlanks(expand(production.tree))),
   }));
   const definitions: TemplateDefinition[] = [...new Set(productions.definitions.values())].map(
     production => ({
@@ -25,7 +26,7 @@ export function compileDocument(content: string, lines: DocumentLine[], blocks: 
       blocks: [...production.blocks],
       dependencies: [...production.dependencies],
       recursive: recursive.has(production),
-      ast: identify(expand(production.tree)),
+      ast: identify(trimBoundaryBlanks(expand(production.tree))),
     }),
   );
 
