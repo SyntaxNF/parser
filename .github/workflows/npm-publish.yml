@@ -25,25 +25,25 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/postgresql
-          ref: ce692e1d0e1b8d1876bee491d6292824d65902dd
+          ref: main
           path: postgresql
 
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/sqlserver
-          ref: a55ba8bb327a3bcee5d6c192202a2b0d7ebfa8b5
+          ref: main
           path: sqlserver
 
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/mysql
-          ref: 10494459a48c45bad9220783591d158680ab1a8c
+          ref: main
           path: mysql
 
       - uses: actions/checkout@v6
         with:
           repository: SyntaxNF/oracle
-          ref: 10017725141bcc75e20ec500dce7515c379aa3a3
+          ref: main
           path: oracle
 
       - uses: actions/setup-node@v6
