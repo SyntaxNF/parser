@@ -1,5 +1,5 @@
 import { SNFParseError } from '../error';
-import { Node, NodeType } from '../type';
+import { Node, NodeType, QuoteCharacter } from '../type';
 
 interface CharType {
   char: string;
@@ -65,7 +65,7 @@ export class SyntaxParser {
         const expected = this.closeStack.at(-1);
         if (expected) {
           throw new SNFParseError(
-            `Unclosed block, expected "${expected}"`,
+            `${expected === "'" || expected === '"' ? 'Unclosed quote' : 'Unclosed block'}, expected "${expected}"`,
             this.input,
             this.input.length,
             expected,
@@ -77,6 +77,18 @@ export class SyntaxParser {
       const char = info.char;
       const expected = this.closeStack.at(-1);
       if (!info.decode && char === expected) {
+        if (type === NodeType.QUOTED && this.input[this.pos] === char) {
+          // SQL doubled delimiters are literal text inside this quote container.
+          this.pos++;
+          nodes.push({
+            type: NodeType.OTHER,
+            content: char + char,
+            raw: this.input.slice(info.pos, this.pos),
+            start: info.pos,
+            end: this.pos,
+          });
+          continue;
+        }
         end = info.pos;
         this.closeStack.pop();
         break;
@@ -87,10 +99,8 @@ export class SyntaxParser {
       }
 
       if (!info.decode && char === '[') {
-        this.closeStack.push(']');
         nodes.push(this.parseOptional(info.pos));
       } else if (!info.decode && char === '{') {
-        this.closeStack.push('}');
         nodes.push(this.parseEnum(info.pos));
       } else if (this.isRepeatStartChar(info)) {
         this.back();
@@ -126,22 +136,8 @@ export class SyntaxParser {
       } else if (this.isWrapChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.WRAP, this.isWrapChar, this.isNotWrapChar));
-      } else if (!info.decode && char === `'`) {
-        nodes.push({
-          type: NodeType.QUOTE,
-          content: `'`,
-          raw: this.input.slice(info.pos, info.end),
-          start: info.pos,
-          end: info.end,
-        });
-      } else if (!info.decode && char === `"`) {
-        nodes.push({
-          type: NodeType.DOUBLEQUOTE,
-          content: `"`,
-          raw: this.input.slice(info.pos, info.end),
-          start: info.pos,
-          end: info.end,
-        });
+      } else if (!info.decode && (char === "'" || char === '"')) {
+        nodes.push(this.parseDelimited(NodeType.QUOTED, info.pos, char, char));
       } else if (this.isOtherStartChar(info)) {
         this.back();
         nodes.push(this.parseString(NodeType.OTHER, this.isOtherChar, this.isBlankChar));
@@ -269,14 +265,20 @@ export class SyntaxParser {
     };
   }
 
-  private parseOptional(start: number): Node {
-    const innerNode = this.parseNode(NodeType.OPTIONAL);
-    const node: Node = {
+  private parseDelimited(type: NodeType, start: number, closing: string, quote?: QuoteCharacter): Node {
+    this.closeStack.push(closing);
+    const innerNode = this.parseNode(type);
+    return {
       ...innerNode,
       start,
       end: innerNode.end + 1,
       raw: this.input.slice(start, innerNode.end + 1),
+      ...(quote ? { quote } : {}),
     };
+  }
+
+  private parseOptional(start: number): Node {
+    const node = this.parseDelimited(NodeType.OPTIONAL, start, ']');
     if (node.children?.some(child => child.type === NodeType.REPEAT)) {
       return { ...node, type: NodeType.LOOP };
     }
@@ -284,13 +286,7 @@ export class SyntaxParser {
   }
 
   private parseEnum(start: number): Node {
-    const innerNode = this.parseNode(NodeType.ENUM);
-    return this.groupedEnumChildren({
-      ...innerNode,
-      start,
-      end: innerNode.end + 1,
-      raw: this.input.slice(start, innerNode.end + 1),
-    });
+    return this.groupedEnumChildren(this.parseDelimited(NodeType.ENUM, start, '}'));
   }
 
   private groupedEnumChildren(node: Node): Node {

@@ -129,7 +129,7 @@ test('real wrappers, fixed context and quote semantics may change identity', () 
   assert.notEqual(named(parse('SELECT x'), 'x').uid, named(parse('FROM x'), 'x').uid);
   assert.notEqual(named(parse("SELECT 'x'"), 'x').uid, named(parse('SELECT "x"'), 'x').uid);
   assert.notEqual(named(parse("SELECT 'x'"), 'x').uid, named(parse('SELECT x'), 'x').uid);
-  assert.notDeepEqual(ids(parse("'A B'"), T.BLANK), ids(parse("'A  B'"), T.BLANK));
+  assert.deepEqual(ids(parse("'A B'"), T.BLANK), ids(parse("'A  B'"), T.BLANK));
   assert.equal(named(parse("DEFAULT 'FIXED' x"), 'x').uid, named(parse("DEFAULT 'OTHER' x"), 'x').uid);
   assert.equal(
     named(createIdentityAllocator()(parse("DEFAULT 'FIXED' x")), 'x').uid,

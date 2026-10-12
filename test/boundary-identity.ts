@@ -89,16 +89,9 @@ test('quoted literals distinguish branches and preserve each branch UID on reord
   for (const alternatives of [
     ["'Y'", "'N'"],
     ['"SYS.DM_OS_LATCH_STATS"', '"SYS.DM_OS_WAIT_STATS"'],
-    ["'A B'", "'A  B'"],
     ["'A'", '"A"'],
-    ["''", "' '"],
     ["'IT''S'", "'ITS'"],
-    ["'A.B'", "'A-B'"],
-    ["'A''B'", "'A+B'"],
-    ["'+'", "'-'"],
     ["'V'", "'value'"],
-    ["'A B'", "'A\tB'"],
-    ["'A\r\nB'", "'A\nB'"],
   ]) {
     const before = parse(`{ ${alternatives.join(' | ')} }`);
     const after = parse(`{ ${alternatives.slice().reverse().join(' | ')} }`);
@@ -112,6 +105,98 @@ test('quoted literals distinguish branches and preserve each branch UID on reord
   assert.notEqual(selected(parse("[ 'Y' ]"), T.OPTIONAL)[0].uid, selected(parse("[ 'N' ]"), T.OPTIONAL)[0].uid);
 });
 
+test('all boundary types ignore whitespace and use only the type of fixed symbols', () => {
+  const features: { signature: string; code: string }[] = [];
+  for (const body of ['A+B 1 value', ' A - B\n\t1 renamed ']) {
+    for (const [source, type] of [
+      [`[${body}]`, T.OPTIONAL], [`{${body}}`, T.GROUP],
+      [`'${body}'`, T.QUOTED], [`"${body}"`, T.QUOTED],
+    ] as const) {
+      const ast = parse(source);
+      features.push(collectLocalFeatures([ast]).get(selected(ast, type)[0])!);
+      for (const node of nodes(ast)) assert.equal(node.raw, source.slice(node.start, node.end));
+    }
+  }
+  assert.equal(features[0].signature, '[["D","A"],["T","O"],["D","B"],["N","1"],["T","V"]]');
+  for (const feature of features) assert.deepEqual(feature, features[0]);
+});
+
+test('quoted alternatives with equivalent features are diagnosed and retain distinct ordinal UIDs', () => {
+  for (const alternatives of [
+    ["'A B'", "'A  B'"], ["'A B'", "'A\tB'"], ["'A\r\nB'", "'A\nB'"],
+    ["''", "' '"], ["'A.B'", "'A-B'"], ["'A''B'", "'A+B'"], ["'+'", "'-'"],
+  ]) {
+    const ast = parse(`{ ${alternatives.join(' | ')} }`);
+    const features = collectLocalFeatures([ast]);
+    const [left, right] = selected(ast, T.QUOTED);
+    assert.deepEqual(features.get(left), features.get(right));
+    assert.equal(left.uid!.slice(0, -5), right.uid!.slice(0, -5));
+    assert.notEqual(left.uid, right.uid);
+    const all = nodes(ast);
+    assert.equal(new Set(all.map(node => node.uid)).size, all.length);
+    const collisions = findIdentityCollisions(ast);
+    assert.ok(collisions.some(collision => collision.prefix.startsWith('QT00')));
+    assert.ok(collisions.every(collision => collision.kind === 'same-signature'));
+  }
+});
+
+test('nested quotes match independent UID_V1 vectors and restore the outer quote scope', () => {
+  const ast = parse(`'A "B" C'`);
+  const [outer, inner] = selected(ast, T.QUOTED);
+  const features = collectLocalFeatures([ast]);
+  assert.equal(features.get(inner)!.signature, '[["D","B"]]');
+  assert.equal(features.get(inner)!.code, 'DQ57');
+  assert.equal(features.get(outer)!.signature, '[["D","A"],["Q","\\\"","DQ57"],["D","C"]]');
+  assert.equal(features.get(outer)!.code, '4Q8S');
+  // Expected paths calculated independently with Node crypto from the documented protocol.
+  assert.equal(outer.uid, 'QT00-0001-F62994CCE15750A8C7AC0365B63FF13D-0000');
+  assert.equal(inner.uid, 'QT00-0002-26CBFC9F57035860D6D93E658FD0CDF1-0000');
+  assert.equal(feature(ast, 'B').uid, 'DE00-0003-2A9B2F3E795AE921B8A39CB25FAA8E68-0000');
+  assert.equal(feature(ast, 'C').uid, 'DE00-0002-5860384E056FF3A15B392D13AECBABCB-0000');
+});
+
+test('nested quote UIDs survive input renaming, outer formatting and branch reordering', () => {
+  const before = parse(`MODE { 'A "value" C' | 'X [ "item[, ...]" ] Y' } tail [...]`);
+  const after = parse(`MODE\n{ 'X [ "renamed[ ,  ... ]" ] Y' | 'A "other" C' } last [...]`);
+  for (const type of [T.QUOTED, T.OPTIONAL, T.GROUP, T.LOOP, T.VARIABLE])
+    assert.deepEqual(selected(before, type).map(n => n.uid).sort(), selected(after, type).map(n => n.uid).sort());
+  assert.deepEqual(findIdentityCollisions(before), []);
+  assert.deepEqual(findIdentityCollisions(after), []);
+});
+
+test('nested literal changes affect quote ancestors and descendants without leaking into siblings', () => {
+  const before = parse(`MODE 'A "B C" D' { ON | OFF } tail [...]`);
+  const after = parse(`MODE 'A "E C" D' { ON | OFF } tail [...]`);
+  const beforeQuotes = selected(before, T.QUOTED), afterQuotes = selected(after, T.QUOTED);
+  assert.notEqual(beforeQuotes[0].uid, afterQuotes[0].uid);
+  assert.notEqual(beforeQuotes[1].uid, afterQuotes[1].uid);
+  assert.notEqual(feature(before, 'B').uid, feature(after, 'E').uid);
+  assert.notEqual(feature(before, 'D').uid, feature(after, 'D').uid);
+  for (const type of [T.ENUM, T.GROUP, T.LOOP])
+    assert.deepEqual(selected(before, type).map(n => n.uid), selected(after, type).map(n => n.uid));
+  assert.equal(feature(before, 'tail').uid, feature(after, 'tail').uid);
+});
+
+test('repeated nested quote trees keep deterministic unique UIDs within a document session', () => {
+  const source = `# CASE A\n'A [ 'value' ] C'\n\n# CASE B\n'A [ 'value' ] C'`;
+  const parser = new SNFDocumentParser();
+  const document = parser.parse(source);
+  const roots = document.entries.map(entry => entry.ast);
+  const all = roots.flatMap(nodes);
+  assert.equal(new Set(all.map(node => node.uid)).size, all.length);
+  assert.deepEqual(parser.parse(source), document);
+  assert.throws(() => parser.parse(`'A [ "broken ]'`));
+  assert.deepEqual(parser.parse(source), document);
+  const left = nodes(roots[0]), right = nodes(roots[1]);
+  for (let index = 0; index < left.length; index++) {
+    assert.equal(left[index].uid!.slice(0, -5), right[index].uid!.slice(0, -5));
+    assert.notEqual(left[index].uid, right[index].uid);
+  }
+  const collisions = findIdentityCollisions(roots);
+  assert.ok(collisions.length > 0);
+  assert.ok(collisions.every(collision => collision.kind === 'same-signature'));
+});
+
 test('literal definitions, numbers and type initials have separate feature categories', () => {
   for (const source of ['{ V | value }', '[ V ] [ value ]'])
     assert.deepEqual(findIdentityCollisions(parse(source)), []);
@@ -120,19 +205,32 @@ test('literal definitions, numbers and type initials have separate feature categ
   assert.deepEqual(findIdentityCollisions(parse('{ NO WORD139 | NO 9192 }')), []);
 });
 
-test('literal symbols are content-sensitive in inherited quote scopes without changing external symbol rules', () => {
-  for (const type of [T.OPTIONAL, T.GROUP]) {
-    const before = parse(type === T.OPTIONAL ? "'[ A+B ]'" : "'{ A+B | C }'");
-    const after = parse(type === T.OPTIONAL ? "'[ A-B ]'" : "'{ A-B | C }'");
-    assert.notEqual(selected(before, type)[0].uid, selected(after, type)[0].uid);
+test('fixed symbols contribute only their type in inherited quote scopes while their AST content is preserved', () => {
+  for (const [beforeSource, afterSource, type] of [
+    ["'[ A+B ]'", "'[ A-B ]'", T.OPTIONAL],
+    ["'{ A+B | C }'", "'{ A-B | C }'", T.GROUP],
+    [`'A "B+C" D'`, `'A "B-C" D'`, T.QUOTED],
+  ] as const) {
+    const before = parse(beforeSource), after = parse(afterSource);
+    assert.equal(selected(before, type)[0].uid, selected(after, type)[0].uid);
+    assert.equal(feature(before, 'A').uid, feature(after, 'A').uid);
+    assert.equal(feature(before, '+').content, '+');
+    assert.equal(feature(after, '-').content, '-');
+    assert.notEqual(feature(before, '+').uid, feature(after, '-').uid);
   }
   assert.equal(findIdentityCollisions(parse('{ + | - }'))[0].kind, 'same-signature');
 });
 
-test('inherited quoted whitespace participates in OPTIONAL and GROUP identities', () => {
-  for (const [before, after] of [["'[ A B ]'", "'[ A  B ]'"], ["'{ A B | C }'", "'{ A  B | C }'"]]) {
-    const type = before.includes('[') ? T.OPTIONAL : T.GROUP;
-    assert.notEqual(selected(parse(before), type)[0].uid, selected(parse(after), type)[0].uid);
+test('whitespace is ignored in quoted and inherited OPTIONAL and GROUP identities', () => {
+  for (const [beforeSource, afterSource, type] of [
+    ["'[ A B ]'", "'[ A  B ]'", T.OPTIONAL],
+    ["'{ A B | C }'", "'{ A  B | C }'", T.GROUP],
+    [`'A "B C" D'`, `'A "B  C" D'`, T.QUOTED],
+  ] as const) {
+    const before = parse(beforeSource), after = parse(afterSource);
+    for (const nodeType of [type, T.QUOTED, T.DEFINITION, T.BLANK])
+      assert.deepEqual(selected(before, nodeType).map(node => node.uid), selected(after, nodeType).map(node => node.uid));
+    assert.ok(selected(after, T.BLANK).some(node => node.content === '  ' && node.raw === '  '));
   }
 });
 

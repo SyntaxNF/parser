@@ -33,7 +33,7 @@ for (const file of files) {
     if (!node.synthetic)
       assert.equal(doc.blocks[node.sourceBlock!].content.slice(node.start, node.end), node.raw, file);
     if (node.type === T.REFERENCE) assert.ok(targets.has(node.target), file);
-    assert.ok(![T.REPEAT, T.SPLIT, T.QUOTE, T.DOUBLEQUOTE].includes(node.type), file);
+    assert.ok(![T.REPEAT, T.SPLIT].includes(node.type), file);
   }
   const second = parser.parse(source);
   assert.deepEqual(

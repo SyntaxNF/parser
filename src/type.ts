@@ -12,8 +12,6 @@ export enum NodeType {
   NUMBER = 'n',
   BLANK = 'b',
   WRAP = 'w',
-  QUOTE = 'q',
-  DOUBLEQUOTE = 'dq',
   OTHER = 'o',
   QUOTED = 'qt',
   REFERENCE = 'rf',

@@ -1,4 +1,4 @@
-import { Node, NodeType, QuoteCharacter } from '../type';
+import { Node, NodeType } from '../type';
 import {
   advanceDefinitionScope,
   definitionName,
@@ -10,7 +10,7 @@ import { collectLocalFeatures, LocalFeature } from './boundary-identity';
 
 export const UID_VERSION = 'UID_V1';
 
-/** Append-only registry: never renumber or reuse a retired code. */
+/** Explicit type codes, independent of traversal order. */
 export const UID_TYPE_CODES: Readonly<Record<NodeType, string>> = Object.freeze({
   [NodeType.ROOT]: 'RO00',
   [NodeType.COLLECTION]: 'CO00',
@@ -28,8 +28,6 @@ export const UID_TYPE_CODES: Readonly<Record<NodeType, string>> = Object.freeze(
   [NodeType.QUOTED]: 'QT00',
   [NodeType.REFERENCE]: 'RF00',
   [NodeType.STATEMENT]: 'ST00',
-  [NodeType.QUOTE]: 'QU00',
-  [NodeType.DOUBLEQUOTE]: 'DQ00',
   [NodeType.OTHER]: 'OT00',
 });
 
@@ -56,7 +54,6 @@ const contextual = new Set([
   NodeType.REFERENCE,
   NodeType.STATEMENT,
 ]);
-const trivia = new Set([NodeType.BLANK, NodeType.WRAP]);
 
 const hex = (value: number, label: string) => {
   if (value > 0xffff) throw new RangeError(`SNF uid ${label} overflow: ${value} exceeds FFFF`);
@@ -65,7 +62,7 @@ const hex = (value: number, label: string) => {
 
 /** Derive identity and display metadata from the same incoming definition scope. */
 function describeNode(
-  node: Node, scope: DefinitionScope, feature: LocalFeature | undefined, quote?: QuoteCharacter,
+  node: Node, scope: DefinitionScope, feature: LocalFeature | undefined,
 ): NodeDescription {
   let local: unknown = null;
   let name: string | undefined;
@@ -79,10 +76,7 @@ function describeNode(
       const descriptor = node.children?.find(child => fixed.has(child.type));
       name = descriptor?.content.toUpperCase() || 'OPTIONAL';
     }
-  } else if (
-    [NodeType.SPLIT, NodeType.REPEAT, NodeType.QUOTE, NodeType.DOUBLEQUOTE].includes(node.type) ||
-    (trivia.has(node.type) && quote)
-  ) {
+  } else if ([NodeType.SPLIT, NodeType.REPEAT].includes(node.type)) {
     local = [UID_TYPE_CODES[node.type], node.content];
   }
 
@@ -125,7 +119,7 @@ export function createUidAllocator(hash: (input: string) => string): (root: Node
           throw new Error(`Unknown SNF uid node type: ${node.type}`);
         const code = UID_TYPE_CODES[node.type];
         const quote = node.quote ?? scope.quote;
-        const { local, name } = describeNode(node, scope, features.get(node), quote);
+        const { local, name } = describeNode(node, scope, features.get(node));
         // Parent digest commits to all ancestor segments, never their ordinals.
         // JSON arrays preserve token boundaries; UTF-8 and hash case are fixed.
         const path = JSON.stringify([

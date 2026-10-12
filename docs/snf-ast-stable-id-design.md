@@ -10,7 +10,7 @@
 
 1. 保留物理行和源码块，收集 CASE、WHERE、ONEOFIS、PARTOFIS、STATEMENT。
 2. 构建本地名称表，检查重名、命名规则与块归属，支持前向引用及别名。
-3. 解析内容，显式构建 OPTIONAL/ENUM/GROUP，组合 QUOTED 并绑定完整 LOOP 成员。
+3. 解析内容，统一递归构建 OPTIONAL/ENUM/GROUP/QUOTED，再绑定完整 LOOP 成员。
 4. ONEOFIS 按行、PARTOFIS 按块构建候选。
 5. 根据本地定义依赖图识别强连通分量。递归定义使用 REFERENCE，其余本地引用用 COLLECTION 包裹并展开。
 6. 对每棵最终树执行后序深度优先遍历，先计算 QUOTED / OPTIONAL / GROUP 的局部特征。
@@ -29,7 +29,7 @@
 - WHERE helper 展开为 COLLECTION(children=定义内容)。包裹保留 binding={name,kind}，其名称不参与 UID。
 - 递归引用 REFERENCE 保存 binding、name 和已解析 target。目标内容在 definitions 中，不做无限展开。
 - STATEMENT 保存名称和类别标签。类别不作为 SNF 内容解析；类别顺序与拼写按原文保留。
-- QUOTED 保留完整引号序列（包括空序列），内部空白有意义。
+- QUOTED 保留完整引号序列（包括空序列）和内部空白原文；空白不参与局部特征。
 
 ## UID 四段格式
 
@@ -44,7 +44,7 @@ TTrr-DDDD-HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH-NNNN
 | H…H | 功能路径的 128 位哈希，以 32 位大写十六进制表示 |
 | NNNN | 全文档相同前三段前缀下的出现序号，0000–FFFF |
 
-版本 `UID_VERSION='UID_V1'`。代码登记只追加，不随遍历动态分配、不回收复用。
+版本 `UID_VERSION='UID_V1'`。类型码显式登记，不随遍历动态分配，现有类型码保持固定。
 
 | 类型 | 类型码 | 含义 |
 | --- | --- | --- |
@@ -65,8 +65,6 @@ TTrr-DDDD-HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH-NNNN
 | STATEMENT | ST00 | 嵌套语句声明标识 |
 | SPLIT | SP00 | 内部语法阶段候选分隔符，最终树不含此节点 |
 | REPEAT | RE00 | 内部语法阶段重复标记，最终树不含此节点 |
-| QUOTE | QU00 | 内部单引号定界符，最终树不含此节点 |
-| DOUBLEQUOTE | DQ00 | 内部双引号定界符，最终树不含此节点 |
 
 ## DEFINITION 作用域栈
 
@@ -90,8 +88,7 @@ TTrr-DDDD-HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH-NNNN
 | COLLECTION / VARIABLE / ENUM / LOOP / REFERENCE / STATEMENT | 有关键字时 `['DEFINITION_CONTEXT', keywords]`，否则 null |
 | QUOTED / OPTIONAL / GROUP | 直接子节点特征数组的四位大写 Base36 哈希 |
 | ROOT | null，不寻找名称 |
-| 引号内 BLANK / WRAP | `[类型码,content]` |
-| 引号外 BLANK / WRAP | null |
+| BLANK / WRAP | null，引号内外一致 |
 
 COLLECTION 与其被替换的变量一样，使用调用位置的功能标识；定义体的新关键字不会抹去调用位置的祖先哈希。例如 `SELECT item FROM item` 中，即使 item 的定义都是 `VALUE x`，两个调用及其内部节点在整段换序后仍各自保持 ID。
 
@@ -104,12 +101,11 @@ COLLECTION 与其被替换的变量一样，使用调用位置的功能标识；
 | DEFINITION | `['D', content]`，完整解码文本 |
 | NUMBER | `['N', content]`，完整文本，不转数值 |
 | QUOTED | `['Q', quote, 子节点已经生成的四位局部特征]` |
-| 引号外 BLANK / WRAP | 忽略 |
-| 引号内 BLANK / WRAP | `['SPACE', content]` |
-| 引号内 OTHER | `['TEXT', content]`，包括 SQL 成对转义引号及其他固定符号 |
-| 其他类型 | `['T', 类型名称首字母]`，例如 VARIABLE→V、ENUM→E、LOOP→L、COLLECTION→C、OPTIONAL / 引号外 OTHER→O |
+| BLANK / WRAP | 忽略，引号内外一致 |
+| OTHER | `['T', 'O']`，包括 SQL 成对转义引号及其他固定符号，只贡献类型 |
+| 其他类型 | `['T', 类型名称首字母]`，例如 VARIABLE→V、ENUM→E、LOOP→L、COLLECTION→C、OPTIONAL→O、GROUP→G |
 
-变量名、变量值、helper 名、name、UID、源码位置不参与局部特征。类别标签区分固定定义 `V` 与变量类型 V、固定数字与其他文本。父节点不访问孙节点；普通容器的内容不向父级暴露，QUOTED 只提供已算好的短码和引号类型。父节点也不使用子节点 UID 或同前缀序号。
+变量名、变量值、helper 名、name、UID、源码位置不参与局部特征。类别标签区分固定定义 `V` 与变量类型 V、固定数字与其他类型。父节点不访问孙节点；OPTIONAL / GROUP 等普通容器的内容和短码不向父级暴露，QUOTED 提供已算好的短码和引号类型。父节点也不使用子节点 UID 或同前缀序号。空白和固定符号的原文继续保留在 AST 中；OTHER 叶子自身的 UID 仍使用 content。
 
 短码协议：对直接子级特征数组的 JSON 编码做 UTF-8 SHA-256，将完整 256 位摘要按无符号大端整数取模 `36⁴ = 1,679,616`，转大写 Base36，左侧补 0 到 4 位。每个容器压缩一次，不对内部各个定义单独做短哈希。空容器使用 `[]` 的哈希，不返回 null。浏览器与 Node 使用同一算法，不依赖外部名称表或历史结果。
 
@@ -124,16 +120,16 @@ COLLECTION 与其被替换的变量一样，使用调用位置的功能标识；
 再整体压成该 OPTIONAL 自己的四位局部特征。
 ```
 
-“不读取孙节点”不等于完全不受其影响：QUOTED 内容改变会改变它提供的短码，进而影响直接父级。普通 OPTIONAL、ENUM、LOOP 等子节点仍只贡献类型，不传递内部内容。
+“不读取孙节点”不等于完全不受其影响：QUOTED 的有效特征改变会改变它提供的短码，进而影响直接父级。仅修改空白内容或 OTHER 符号内容不会改变容器特征码。普通 OPTIONAL、GROUP、ENUM、LOOP 等子节点仍只贡献类型，不传递内部内容。
 
 ### 两次深度优先遍历
 
-1. **后序阶段**：进入节点时传递引号上下文；子节点处理完成后，当前节点只读取第一层子节点的内容、类型和已经生成的 QUOTED 局部特征，记录压缩前签名及四位短码。
+1. **后序阶段**：子节点处理完成后，当前节点只读取第一层子节点的内容、类型和已经生成的 QUOTED 局部特征，记录压缩前签名及四位短码。特征提取不依赖引号上下文。
 2. **前序阶段**：读取预先算好的局部特征，结合父级功能路径分配 UID，同时按 DEFINITION 作用域生成 name。
 
 两阶段都使用显式栈，避免深层 AST 的 JavaScript 调用栈溢出。局部特征表仅存在于本次解析中，不向 AST 增加中间字段，不改变一次 parse 返回最终结果的接口。
 
-交换 `[ [ A a ] [ B b ] ]` 的两个内层 OPTIONAL，外层输入始终是 `[['T','O'],['T','O']]`；内层不同功能节点可保持各自 UID。将 `[ A [ B b ] ]` 改成 `[ [ B b ] A ]` 则改变外层特征顺序，UID 可以改变。对少数 SQL 中合法且等价的参数换序，不做额外的无序化处理。引号外不同 OTHER 符号也可能得到相同特征，由碰撞检测报告。
+交换 `[ [ A a ] [ B b ] ]` 的两个内层 OPTIONAL，外层输入始终是 `[['T','O'],['T','O']]`；内层不同功能节点可保持各自 UID。将 `[ A [ B b ] ]` 改成 `[ [ B b ] A ]` 则改变外层特征顺序，UID 可以改变。对少数 SQL 中合法且等价的参数换序，不做额外的无序化处理。不同空白或 OTHER 符号可能得到相同特征，引号内外均由碰撞检测报告，并按序号保持 UID 唯一。
 
 ## 哈希协议
 
