@@ -11,6 +11,11 @@ export type {
   DefinitionKind,
   TemplateEntry,
   TemplateDefinition,
+  ParseOptions,
+  SimpleNode,
+  SimpleSNFDocument,
+  SimpleTemplateEntry,
+  SimpleTemplateDefinition,
 } from './type';
 export { UID_TYPE_CODES, UID_VERSION } from './internal/identity';
 export { findIdentityCollisions } from './identity-collisions';

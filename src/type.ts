@@ -20,6 +20,11 @@ export enum NodeType {
 
 export type QuoteCharacter = `'` | `"`;
 
+export interface ParseOptions {
+  /** Omit template source payload and provenance from the returned AST/document. */
+  simple?: boolean;
+}
+
 export interface Node {
   type: NodeType;
   /** Decoded leaf text (inline BLANK is normalized); source text for containers. */
@@ -50,6 +55,12 @@ export interface Node {
   /** Stable identity assigned once after template compilation. */
   uid?: string;
 }
+
+/** Runtime AST view. Containers omit redundant source content; leaves retain decoded text. */
+export type SimpleNode = Omit<Node, 'raw' | 'start' | 'end' | 'sourceBlock' | 'synthetic' | 'content' | 'children'> & {
+  content?: string;
+  children?: SimpleNode[];
+};
 
 export enum DocumentLineType {
   COMMENT = 'comment',
@@ -104,3 +115,10 @@ export interface TemplateDefinition {
   recursive: boolean;
   ast: Node;
 }
+
+export type SimpleTemplateEntry = Omit<TemplateEntry, 'blocks' | 'ast'> & { ast: SimpleNode };
+export type SimpleTemplateDefinition = Omit<TemplateDefinition, 'blocks' | 'ast'> & { ast: SimpleNode };
+export type SimpleSNFDocument = Omit<SNFDocument, 'content' | 'lines' | 'blocks' | 'entries' | 'definitions'> & {
+  entries: SimpleTemplateEntry[];
+  definitions: SimpleTemplateDefinition[];
+};

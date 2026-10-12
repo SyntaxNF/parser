@@ -1,5 +1,6 @@
 import { compileDocument } from './internal/compiler';
-import { Block, DocumentLine, DocumentLineType, SNFDocument } from './type';
+import { Block, DocumentLine, DocumentLineType, ParseOptions, SimpleSNFDocument, SNFDocument } from './type';
+import { simpleDocument } from './internal/simple';
 
 const readLines = (content: string): DocumentLine[] => {
   const lines: DocumentLine[] = [];
@@ -42,7 +43,10 @@ const readLines = (content: string): DocumentLine[] => {
 };
 
 export class SNFDocumentParser {
-  parse(content: string): SNFDocument {
+  parse(content: string, options: ParseOptions & { simple: true }): SimpleSNFDocument;
+  parse(content: string, options?: ParseOptions & { simple?: false }): SNFDocument;
+  parse(content: string, options: ParseOptions): SNFDocument | SimpleSNFDocument;
+  parse(content: string, options: ParseOptions = {}): SNFDocument | SimpleSNFDocument {
     const lines = readLines(content);
     const blocks: Block[] = [];
     let blockLines: DocumentLine[] = [];
@@ -80,6 +84,7 @@ export class SNFDocumentParser {
     }
     appendBlock();
 
-    return compileDocument(content, lines, blocks);
+    const document = compileDocument(content, lines, blocks);
+    return options.simple ? simpleDocument(document) : document;
   }
 }

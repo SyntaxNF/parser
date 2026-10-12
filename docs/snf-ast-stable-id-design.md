@@ -19,6 +19,8 @@
 
 `document.entries` 为顶层入口，`document.definitions` 为已编译的定义集合。`document.blocks` 仅保留源码信息。所有结构子节点只存在于 children，LOOP 分隔符存于 separator，QUOTED 定界符存于 quote。
 
+两个 parse 入口的 `{ simple: true }` 在全部编译及绑定完成后移除源码、行/块和位置字段，并移除容器中重复保存的模板 content；UID、结构、运行时字段和 definitions 保留。精简模式不会重算 UID，递归 REFERENCE.target 仍有效。默认输出继续提供完整来源信息。
+
 非合成节点通过 sourceBlock 和 start/end 指回来源；被展开的子节点可能来自不同源码块。ONEOFIS/PARTOFIS 的合成 ROOT/ENUM 标记 synthetic=true。
 
 ## SNF 显式结构

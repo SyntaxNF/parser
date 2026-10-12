@@ -20,6 +20,7 @@ async function snfFiles(directory: string): Promise<string[]> {
 const files = (await Promise.all(roots.map(snfFiles))).flat().sort();
 let count = 0;
 let sameSignatureCount = 0;
+let fullBytes = 0, simpleBytes = 0;
 const shortHashCollisions: unknown[] = [];
 for (const file of files) {
   const source = await fs.readFile(file, 'utf8'),
@@ -50,6 +51,24 @@ for (const file of files) {
     ids,
     file,
   );
+  const simple = parser.parse(source, { simple: true });
+  const simpleNodes = [...simple.entries, ...simple.definitions].flatMap(item => {
+    const all = [], pending = [item.ast];
+    while (pending.length) {
+      const node = pending.pop()!;
+      all.push(node);
+      for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) pending.push(node.children![index]);
+    }
+    return all;
+  });
+  assert.deepEqual(simpleNodes.map(node => node.uid), ids, `${file}: simple mode UID mismatch`);
+  for (const field of ['content', 'lines', 'blocks']) assert.equal(Object.hasOwn(simple, field), false, file);
+  for (const node of simpleNodes)
+    for (const field of ['raw', 'start', 'end', 'sourceBlock', 'synthetic']) assert.equal(Object.hasOwn(node, field), false, file);
+  const simpleTargets = new Set(simple.definitions.map(definition => definition.ast.uid));
+  for (const node of simpleNodes) if (node.type === T.REFERENCE) assert.ok(simpleTargets.has(node.target), file);
+  fullBytes += Buffer.byteLength(JSON.stringify(doc));
+  simpleBytes += Buffer.byteLength(JSON.stringify(simple));
   count += ids.length;
 }
 console.log(
@@ -58,6 +77,7 @@ console.log(
 console.log(
   `Boundary collision audit: ${sameSignatureCount} same-signature prefixes (ordinal fallback), ${shortHashCollisions.length} short-hash collisions.`,
 );
+console.log(`Simple JSON: ${fullBytes} -> ${simpleBytes} bytes (${(100 * (1 - simpleBytes / fullBytes)).toFixed(1)}% smaller), same UIDs and recursive targets.`);
 assert.deepEqual(
   shortHashCollisions, [], 'Four-digit feature hashes introduced order-sensitive boundary identities',
 );

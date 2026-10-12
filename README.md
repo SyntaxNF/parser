@@ -36,6 +36,25 @@ const fragment = new SNFParser().parse("ORDER BY 'column' [, ...]");
 
 `entries` 与 `definitions` 的全部节点在同一文档内拥有唯一 UID。两个解析入口每次调用都创建独立会话，不依赖任何历史解析结果。
 
+## 精简 JSON
+
+两个解析入口都支持 `{ simple: true }`，适合只使用 AST 的消费方：
+
+```ts
+const document = new SNFDocumentParser().parse(source, { simple: true });
+const fragment = new SNFParser().parse("ORDER BY 'column' [, ...]", { simple: true });
+const json = JSON.stringify(document);
+```
+
+默认或 `{ simple: false }` 仍返回完整结果。simple 模式在完整编译、UID 分配和递归绑定结束后精简返回值，不改变语法、节点顺序、UID、name 或 indentLevel：
+
+- 文档只保留 type、entries、definitions，移除原始 content、lines、blocks。
+- 入口与定义移除来源 blocks 索引，保留名称、种类、dependencies、recursive 和 AST。定义表继续保留，REFERENCE.target 仍指向其中的根 UID。
+- 所有节点移除 raw、start、end、sourceBlock、synthetic。ROOT / QUOTED / OPTIONAL / ENUM / GROUP / LOOP 等容器不再重复保存模板 content；叶子保留解码文本，COLLECTION 保留作为绑定/输入键的 content。
+- children、quote、separator、binding、categories、target 等运行时结构均保留。生成器应读取叶子文本和结构字段，而非模板原文。
+
+TypeScript 根据选项返回 SimpleNode / SimpleSNFDocument 或原来的 Node / SNFDocument；动态布尔选项返回两者的联合类型。来源定位与带源码位置的诊断使用默认完整模式。simple 只减少返回对象和 JSON 的大小，解析与校验仍完整执行。
+
 ## 文档指令
 
 | 指令 | 语义 |
@@ -156,6 +175,7 @@ for (const { kind, prefix, occurrences } of collisions) {
 | `src/internal/productions.ts` | 声明收集、指令检查、内容树构建、源码错误定位与依赖收集 |
 | `src/internal/syntax.ts` / `normalize.ts` | 基础记号与递归容器解析、完整循环成员绑定 |
 | `src/internal/layout.ts` | 相对缩进、纯 SNF 排版层、候选公共边界和 helper 调用行基准 |
+| `src/internal/simple.ts` | 编译完成后的精简 AST/文档输出，移除模板源码与来源字段 |
 | `src/internal/definitions.ts` | 递归检测、本地定义展开和引用目标绑定 |
 | `src/internal/identity.ts` / `definition-context.ts` / `hash.ts` | 功能标识与名称规则、作用域状态、UID 编码与哈希 |
 | `src/internal/boundary-identity.ts` / `src/identity-collisions.ts` | QUOTED / OPTIONAL / GROUP 后序局部特征、短码碰撞与重复特征诊断 |
@@ -166,6 +186,7 @@ for (const { kind, prefix, occurrences } of collisions) {
 pnpm test
 pnpm test:uid
 pnpm test:indent
+pnpm test:simple
 pnpm exec tsc --noEmit
 pnpm build
 pnpm test:complex
